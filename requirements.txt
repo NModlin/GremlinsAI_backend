@@ -1,38 +1,40 @@
-# Phase 1: Core Dependencies Only
+# gremlinsAI Backend Dependencies
+# Production-ready versions for Phase 1 & Phase 2
+
 # FastAPI and Server
-fastapi>=0.100.0
-uvicorn[standard]>=0.20.0
+fastapi>=0.100.0,<1.0.0
+uvicorn[standard]>=0.20.0,<1.0.0
 
-# LangChain and LangGraph
-langchain>=0.1.0
-langgraph>=0.0.40
-langchain-community>=0.0.30
-langchain-core>=0.1.40
+# LangChain and LangGraph - Core AI Framework
+langchain>=0.1.0,<1.0.0
+langgraph>=0.0.40,<1.0.0
+langchain-community>=0.0.30,<1.0.0
+langchain-core>=0.1.40,<1.0.0
 
-# Tools
-ddgs>=6.0.0
+# Search Tools
+ddgs>=6.0.0,<7.0.0
+
+# Database (Phase 2)
+sqlalchemy>=2.0.0,<3.0.0
+alembic>=1.13.0,<2.0.0
+aiosqlite>=0.19.0,<1.0.0
 
 # Utilities
-python-dotenv>=1.0.0
+python-dotenv>=1.0.0,<2.0.0
 pydantic>=2.0.0,<3.0.0
 
-# Phase 2: Database Dependencies
-sqlalchemy>=2.0.0
-alembic>=1.13.0
-aiosqlite>=0.19.0
+# Phase 3: Multi-Agent Architecture
+crewai>=0.28.0,<1.0.0
+crewai-tools>=0.1.0,<1.0.0
+langchain-openai>=0.1.0,<1.0.0
 
-# Phase 3+ Dependencies (commented out for now)
-# langchain-openai
-# crewai==0.28.8
-# crewai_tools==0.1.6
-# ffmpeg-python==0.2.0
-# openai-whisper==20231117
-# ollama==0.2.0
-# qdrant-client==1.7.3
-# minio==7.2.0
-# celery==5.3.6
-# redis==5.0.1
-# kafka-python==2.0.2
-# strawberry-graphql[fastapi]==0.215.0
-# grpcio==1.60.0
-# grpcio-tools==1.60.0
+# Phase 4: Data Infrastructure Overhaul
+qdrant-client>=1.7.0,<2.0.0
+sentence-transformers>=2.2.0,<3.0.0
+langchain-qdrant>=0.1.0,<1.0.0
+pypdf>=4.0.0,<5.0.0
+python-multipart>=0.0.6,<1.0.0
+
+# Future Phase Dependencies
+# Phase 5+: Orchestration, multi-modal capabilities
+# These will be added in future releases as needed

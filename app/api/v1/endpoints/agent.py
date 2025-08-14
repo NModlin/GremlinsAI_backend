@@ -1,13 +1,19 @@
 # app/api/v1/endpoints/agent.py
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
 from app.core.agent import agent_graph_app
+from app.core.multi_agent import multi_agent_orchestrator
 from app.database.database import get_db
 from app.services.chat_history import ChatHistoryService
+from app.services.agent_memory import AgentMemoryService
 from app.api.v1.schemas.chat_history import AgentConversationRequest, AgentConversationResponse
+from app.api.v1.schemas.multi_agent import LegacyAgentRequest, LegacyAgentResponse
 from langchain_core.messages import HumanMessage, AIMessage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -29,6 +35,7 @@ async def invoke_agent_simple(request: dict):
 @router.post("/chat", response_model=AgentConversationResponse)
 async def invoke_agent_with_conversation(
     request: AgentConversationRequest,
+    use_multi_agent: bool = Query(False, description="Use multi-agent system for enhanced reasoning"),
     db: AsyncSession = Depends(get_db)
 ):
     """Invoke agent with conversation context and history management."""
@@ -64,39 +71,70 @@ async def invoke_agent_with_conversation(
                 content=request.input
             )
 
-        # Get conversation context for the agent
-        context_messages = []
-        if conversation_id:
-            context = await ChatHistoryService.get_conversation_context(
+        # Choose between single-agent and multi-agent processing
+        if use_multi_agent:
+            # Use multi-agent system for enhanced reasoning
+            logger.info(f"Using multi-agent system for query: {request.input}")
+
+            # Create context-aware prompt
+            context_prompt = await AgentMemoryService.create_agent_context_prompt(
                 db=db,
                 conversation_id=conversation_id,
-                max_messages=10  # Limit context to last 10 messages
+                current_query=request.input
+            ) if conversation_id else request.input
+
+            # Execute simple multi-agent workflow
+            multi_result = multi_agent_orchestrator.execute_simple_query(
+                query=context_prompt,
+                context=""
             )
 
-            if context:
-                context_used = True
-                # Convert context to LangChain messages
-                for ctx_msg in context[:-1]:  # Exclude the message we just added
-                    if ctx_msg["role"] == "user":
-                        context_messages.append(HumanMessage(content=ctx_msg["content"]))
-                    elif ctx_msg["role"] == "assistant":
-                        context_messages.append(AIMessage(content=ctx_msg["content"]))
+            agent_response = str(multi_result.get("result", ""))
+            # Create a simple dict structure instead of a dynamic object
+            final_state = {
+                "multi_agent_result": multi_result,
+                "agent_outcome": {
+                    'return_values': {'output': agent_response}
+                }
+            }
+            context_used = True
 
-        # Add current user message
-        context_messages.append(HumanMessage(content=request.input))
+        else:
+            # Use original single-agent system
+            context_messages = []
+            if conversation_id:
+                context = await ChatHistoryService.get_conversation_context(
+                    db=db,
+                    conversation_id=conversation_id,
+                    max_messages=10  # Limit context to last 10 messages
+                )
 
-        # Invoke the agent with context
-        inputs = {"messages": context_messages}
-        final_state = {}
-        for s in agent_graph_app.stream(inputs):
-            final_state.update(s)
+                if context:
+                    context_used = True
+                    # Convert context to LangChain messages
+                    for ctx_msg in context[:-1]:  # Exclude the message we just added
+                        if ctx_msg["role"] == "user":
+                            context_messages.append(HumanMessage(content=ctx_msg["content"]))
+                        elif ctx_msg["role"] == "assistant":
+                            context_messages.append(AIMessage(content=ctx_msg["content"]))
 
-        # Extract agent response
-        agent_response = ""
-        if "agent_outcome" in final_state:
-            outcome = final_state["agent_outcome"]
-            if hasattr(outcome, 'return_values') and 'output' in outcome.return_values:
-                agent_response = outcome.return_values['output']
+            # Add current user message
+            context_messages.append(HumanMessage(content=request.input))
+
+            # Invoke the agent with context
+            inputs = {"messages": context_messages}
+            final_state = {}
+            for s in agent_graph_app.stream(inputs):
+                final_state.update(s)
+
+            # Extract agent response
+            agent_response = ""
+            if "agent_outcome" in final_state:
+                outcome = final_state["agent_outcome"]
+                if isinstance(outcome, dict) and 'return_values' in outcome:
+                    agent_response = outcome['return_values'].get('output', '')
+                elif hasattr(outcome, 'return_values') and 'output' in outcome.return_values:
+                    agent_response = outcome.return_values['output']
 
         # Save agent response to conversation if saving is enabled
         response_message = None

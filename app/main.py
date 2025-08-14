@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 
-from app.api.v1.endpoints import agent, chat_history, orchestrator
+from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents
 from app.database.database import ensure_data_directory
 
 
@@ -21,8 +21,8 @@ async def lifespan(app: FastAPI):
 # Create the main FastAPI application instance
 app = FastAPI(
     title="gremlinsAI",
-    description="API for the gremlinsAI multi-modal agentic system.",
-    version="2.0.0",  # Updated for Phase 2
+    description="API for the gremlinsAI multi-modal agentic system with advanced multi-agent architecture and RAG capabilities.",
+    version="4.0.0",  # Updated for Phase 4
     lifespan=lifespan
 )
 
@@ -36,6 +36,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # Include the API routers from different modules
 app.include_router(agent.router, prefix="/api/v1/agent", tags=["Agent"])
+app.include_router(multi_agent.router, prefix="/api/v1/multi-agent", tags=["Multi-Agent"])
+app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents & RAG"])
 app.include_router(chat_history.router, prefix="/api/v1/history", tags=["Chat History"])
 app.include_router(orchestrator.router, prefix="/api/v1/orchestrator", tags=["Orchestrator"])
 

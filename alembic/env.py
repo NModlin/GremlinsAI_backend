@@ -12,7 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import our models and database configuration
 from app.database.database import Base, DATABASE_URL
-from app.database.models import Conversation, Message
+from app.database.models import Conversation, Message, Document, DocumentChunk, SearchQuery
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

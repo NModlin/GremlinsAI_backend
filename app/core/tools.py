@@ -1,6 +1,9 @@
 # app/core/tools.py
+import logging
 from langchain_community.tools import DuckDuckGoSearchRun
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 # Initialize the tool. This can be reused across the application.
 search_tool = DuckDuckGoSearchRun()
@@ -13,7 +16,7 @@ def duckduckgo_search(query: str) -> str:
     A wrapper for the DuckDuckGo Search tool to be used by agents.
     It takes a query string and returns the search results.
     """
-    print(f"--- Executing search for: {query} ---")
+    logger.info(f"Executing search for: {query}")
     return search_tool.invoke(query)
 
 # In later phases, more tools will be added here.

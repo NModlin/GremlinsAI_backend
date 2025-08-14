@@ -1,4 +1,5 @@
 # app/core/agent.py
+import logging
 from langchain_core.agents import AgentAction, AgentFinish
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
@@ -6,6 +7,8 @@ from langgraph.prebuilt import ToolNode
 from typing import TypedDict, Annotated, List, Union
 import operator
 from app.core.tools import duckduckgo_search
+
+logger = logging.getLogger(__name__)
 # from langchain_openai import ChatOpenAI # Will be used with a proper model in later phases
 # from langchain_core.prompts import ChatPromptTemplate
 # from langchain.agents import create_tool_calling_agent
@@ -38,7 +41,7 @@ def run_agent(data: AgentState) -> dict:
     last_message = messages[-1]
     if isinstance(last_message, HumanMessage):
         query = last_message.content
-        print(f"--- Agent processing query: {query} ---")
+        logger.info(f"Agent processing query: {query}")
 
         # For Phase 1, we'll directly perform the search and return results
         search_result = search_function(query)
