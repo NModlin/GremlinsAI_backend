@@ -81,6 +81,17 @@ async def get_conversation(
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
+        # Broadcast real-time update for new conversation
+        try:
+            from app.api.v1.websocket.endpoints import broadcast_conversation_update
+            await broadcast_conversation_update(conversation.id, "conversation_created", {
+                "id": conversation.id,
+                "title": conversation.title,
+                "created_at": conversation.created_at.isoformat()
+            })
+        except Exception as e:
+            logger.warning(f"Failed to broadcast conversation creation: {e}")
+
         return conversation
     except HTTPException:
         raise
@@ -155,6 +166,20 @@ async def add_message(
 
         if not new_message:
             raise HTTPException(status_code=404, detail="Conversation not found")
+
+        # Broadcast real-time update for new message
+        try:
+            from app.api.v1.websocket.endpoints import broadcast_new_message
+            await broadcast_new_message(message.conversation_id, {
+                "id": new_message.id,
+                "role": new_message.role,
+                "content": new_message.content,
+                "created_at": new_message.created_at.isoformat(),
+                "tool_calls": new_message.tool_calls,
+                "extra_data": new_message.extra_data
+            })
+        except Exception as e:
+            logger.warning(f"Failed to broadcast new message: {e}")
 
         return new_message
     except HTTPException:

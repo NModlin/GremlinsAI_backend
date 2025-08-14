@@ -4,7 +4,8 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 
-from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents
+from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime
+from app.api.v1.websocket import endpoints as websocket_endpoints
 from app.database.database import ensure_data_directory
 
 
@@ -21,8 +22,8 @@ async def lifespan(app: FastAPI):
 # Create the main FastAPI application instance
 app = FastAPI(
     title="gremlinsAI",
-    description="API for the gremlinsAI multi-modal agentic system with advanced multi-agent architecture and RAG capabilities.",
-    version="4.0.0",  # Updated for Phase 4
+    description="API for the gremlinsAI multi-modal agentic system with advanced multi-agent architecture, RAG capabilities, asynchronous task orchestration, and real-time communication.",
+    version="6.0.0",  # Updated for Phase 6
     lifespan=lifespan
 )
 
@@ -40,10 +41,51 @@ app.include_router(multi_agent.router, prefix="/api/v1/multi-agent", tags=["Mult
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents & RAG"])
 app.include_router(chat_history.router, prefix="/api/v1/history", tags=["Chat History"])
 app.include_router(orchestrator.router, prefix="/api/v1/orchestrator", tags=["Orchestrator"])
+app.include_router(websocket_endpoints.router, prefix="/api/v1/ws", tags=["WebSocket"])
+app.include_router(realtime.router, prefix="/api/v1/realtime", tags=["Real-time API"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
     """
     A simple root endpoint to confirm the API is running.
     """
-    return {"message": "Welcome to the gremlinsAI API!"}
+    return {
+        "message": "Welcome to the gremlinsAI API!",
+        "version": "6.0.0",
+        "features": [
+            "REST API",
+            "GraphQL API",
+            "WebSocket Real-time Communication",
+            "Multi-Agent Workflows",
+            "Document Management & RAG",
+            "Asynchronous Task Orchestration"
+        ],
+        "endpoints": {
+            "rest_api": "/docs",
+            "graphql": "/graphql",
+            "websocket": "/api/v1/ws/ws"
+        }
+    }
+
+
+# Add GraphQL endpoint
+try:
+    from strawberry.fastapi import GraphQLRouter
+    from app.api.v1.graphql.schema import graphql_schema
+
+    graphql_app = GraphQLRouter(graphql_schema)
+    app.include_router(graphql_app, prefix="/graphql", tags=["GraphQL"])
+
+except ImportError:
+    # Graceful fallback if strawberry is not installed
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("Strawberry GraphQL not available. GraphQL endpoints disabled.")
+
+    @app.get("/graphql", tags=["GraphQL"])
+    async def graphql_unavailable():
+        return {
+            "error": "GraphQL not available",
+            "message": "Install strawberry-graphql[fastapi] to enable GraphQL endpoints",
+            "install_command": "pip install strawberry-graphql[fastapi]"
+        }
