@@ -149,3 +149,48 @@ class SearchQuery(Base):
 
     def __repr__(self):
         return f"<SearchQuery(id={self.id}, query={self.query_text[:50]})>"
+
+
+class AgentInteraction(Base):
+    """
+    Model for tracking agent interactions and multi-agent workflows.
+    """
+    __tablename__ = "agent_interactions"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Agent information
+    agent_name = Column(String(100), nullable=False)  # researcher, analyst, writer, coordinator
+    agent_role = Column(String(200), nullable=True)
+
+    # Interaction details
+    interaction_type = Column(String(50), nullable=False)  # workflow, query, task
+    input_data = Column(Text, nullable=True)
+    output_data = Column(Text, nullable=True)
+
+    # Workflow context
+    workflow_id = Column(String, nullable=True)  # Links related agent interactions
+    workflow_type = Column(String(100), nullable=True)  # simple_research, complex_analysis, etc.
+    step_number = Column(Integer, nullable=True)  # Order in workflow
+
+    # Performance metrics
+    execution_time_ms = Column(Float, nullable=True)
+    tokens_used = Column(Integer, nullable=True)
+
+    # Context and metadata
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True)
+    task_metadata = Column(JSON, nullable=True)
+
+    # Status tracking
+    status = Column(String(50), default="completed")  # pending, running, completed, failed
+    error_message = Column(Text, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    conversation = relationship("Conversation")
+
+    def __repr__(self):
+        return f"<AgentInteraction(id={self.id}, agent={self.agent_name}, type={self.interaction_type})>"

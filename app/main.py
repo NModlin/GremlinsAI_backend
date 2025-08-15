@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 
-from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime
+from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal
 from app.api.v1.websocket import endpoints as websocket_endpoints
 from app.database.database import ensure_data_directory
 
@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="gremlinsAI",
     description="API for the gremlinsAI multi-modal agentic system with advanced multi-agent architecture, RAG capabilities, asynchronous task orchestration, and real-time communication.",
-    version="6.0.0",  # Updated for Phase 6
+    version="8.0.0",  # Updated for Phase 8
     lifespan=lifespan
 )
 
@@ -43,6 +43,8 @@ app.include_router(chat_history.router, prefix="/api/v1/history", tags=["Chat Hi
 app.include_router(orchestrator.router, prefix="/api/v1/orchestrator", tags=["Orchestrator"])
 app.include_router(websocket_endpoints.router, prefix="/api/v1/ws", tags=["WebSocket"])
 app.include_router(realtime.router, prefix="/api/v1/realtime", tags=["Real-time API"])
+app.include_router(docs.router, prefix="/docs", tags=["Documentation"])
+app.include_router(developer_portal.router, prefix="/developer-portal", tags=["Developer Portal"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
@@ -51,14 +53,17 @@ async def read_root():
     """
     return {
         "message": "Welcome to the gremlinsAI API!",
-        "version": "6.0.0",
+        "version": "8.0.0",
         "features": [
             "REST API",
             "GraphQL API",
             "WebSocket Real-time Communication",
             "Multi-Agent Workflows",
             "Document Management & RAG",
-            "Asynchronous Task Orchestration"
+            "Asynchronous Task Orchestration",
+            "Developer Tools & SDKs",
+            "Interactive Documentation",
+            "Developer Portal"
         ],
         "endpoints": {
             "rest_api": "/docs",

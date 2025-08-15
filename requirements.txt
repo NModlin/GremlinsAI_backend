@@ -45,6 +45,12 @@ billiard>=4.2.0,<5.0.0
 strawberry-graphql[fastapi]>=0.215.0,<1.0.0
 websockets>=12.0,<13.0
 
+# Phase 8: Developer Enablement & Documentation
+jinja2>=3.1.0,<4.0.0
+click>=8.1.0,<9.0.0
+rich>=13.0.0,<14.0.0
+httpx>=0.25.0,<1.0.0
+
 # Future Phase Dependencies
 # Phase 7+: Multi-modal capabilities
 # These will be added in future releases as needed
