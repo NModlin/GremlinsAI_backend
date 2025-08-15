@@ -16,8 +16,9 @@ class Conversation(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     is_active = Column(Boolean, default=True)
     
-    # Relationship to messages
+    # Relationships
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
+    multimodal_content = relationship("MultiModalContent", back_populates="conversation", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Conversation(id={self.id}, title={self.title})>"
@@ -194,3 +195,38 @@ class AgentInteraction(Base):
 
     def __repr__(self):
         return f"<AgentInteraction(id={self.id}, agent={self.agent_name}, type={self.interaction_type})>"
+
+
+class MultiModalContent(Base):
+    """
+    Model for storing multi-modal content and processing results.
+    Supports audio, video, and image content with processing metadata.
+    """
+    __tablename__ = "multimodal_content"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Content information
+    media_type = Column(String(50), nullable=False)  # audio, video, image
+    filename = Column(String(500), nullable=False)
+    file_size = Column(Integer, nullable=False)
+    content_hash = Column(String(64), nullable=True)  # SHA-256 hash for deduplication
+    storage_path = Column(String(1000), nullable=True)  # Path to stored file
+
+    # Processing information
+    processing_status = Column(String(50), default="pending")  # pending, processing, completed, failed
+    processing_result = Column(JSON, nullable=True)  # Processing results and metadata
+    error_message = Column(Text, nullable=True)
+
+    # Context
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    conversation = relationship("Conversation")
+
+    def __repr__(self):
+        return f"<MultiModalContent(id={self.id}, type={self.media_type}, filename={self.filename})>"

@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 
-from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal
+from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal
 from app.api.v1.websocket import endpoints as websocket_endpoints
 from app.database.database import ensure_data_directory
 
@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="gremlinsAI",
     description="API for the gremlinsAI multi-modal agentic system with advanced multi-agent architecture, RAG capabilities, asynchronous task orchestration, and real-time communication.",
-    version="8.0.0",  # Updated for Phase 8
+    version="9.0.0",  # Updated for Phase 8
     lifespan=lifespan
 )
 
@@ -45,6 +45,7 @@ app.include_router(websocket_endpoints.router, prefix="/api/v1/ws", tags=["WebSo
 app.include_router(realtime.router, prefix="/api/v1/realtime", tags=["Real-time API"])
 app.include_router(docs.router, prefix="/docs", tags=["Documentation"])
 app.include_router(developer_portal.router, prefix="/developer-portal", tags=["Developer Portal"])
+app.include_router(multimodal.router, prefix="/api/v1/multimodal", tags=["Multi-Modal"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
@@ -63,12 +64,14 @@ async def read_root():
             "Asynchronous Task Orchestration",
             "Developer Tools & SDKs",
             "Interactive Documentation",
-            "Developer Portal"
+            "Developer Portal",
+            "Multi-Modal Processing (Audio, Video, Image)"
         ],
         "endpoints": {
             "rest_api": "/docs",
             "graphql": "/graphql",
-            "websocket": "/api/v1/ws/ws"
+            "websocket": "/api/v1/ws/ws",
+            "multimodal": "/api/v1/multimodal"
         }
     }
 
