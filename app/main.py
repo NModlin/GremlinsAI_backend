@@ -1,12 +1,21 @@
 # app/main.py
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal
 from app.api.v1.websocket import endpoints as websocket_endpoints
 from app.database.database import ensure_data_directory
+from app.core.exceptions import GremlinsAIException
+from app.core.error_handlers import (
+    gremlins_exception_handler,
+    http_exception_handler,
+    validation_exception_handler,
+    sqlalchemy_exception_handler,
+    general_exception_handler
+)
 
 
 @asynccontextmanager
@@ -14,6 +23,11 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
     ensure_data_directory()
+
+    # Initialize service monitoring
+    from app.core.service_monitor import initialize_service_monitoring
+    initialize_service_monitoring()
+
     yield
     # Shutdown
     pass
@@ -27,13 +41,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Global Error Handling
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"code": "VALIDATION_ERROR", "message": "Input validation failed", "details": exc.errors()},
-    )
+# Enhanced Global Error Handling
+app.add_exception_handler(GremlinsAIException, gremlins_exception_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
+app.add_exception_handler(Exception, general_exception_handler)
 
 # Include the API routers from different modules
 app.include_router(agent.router, prefix="/api/v1/agent", tags=["Agent"])

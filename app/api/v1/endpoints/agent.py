@@ -12,6 +12,12 @@ from app.services.agent_memory import AgentMemoryService
 from app.api.v1.schemas.chat_history import AgentConversationRequest, AgentConversationResponse
 from app.api.v1.schemas.multi_agent import LegacyAgentRequest, LegacyAgentResponse
 from langchain_core.messages import HumanMessage, AIMessage
+from app.core.exceptions import (
+    AgentProcessingException,
+    ValidationException,
+    ValidationErrorDetail,
+    ExternalServiceException
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,15 +27,48 @@ router = APIRouter()
 @router.post("/invoke")
 async def invoke_agent_simple(request: dict):
     """Simple agent invocation (backward compatibility)."""
-    input_text = request.get("input", "")
-    human_message = HumanMessage(content=input_text)
-    inputs = {"messages": [human_message]}
+    try:
+        input_text = request.get("input", "")
 
-    final_state = {}
-    for s in agent_graph_app.stream(inputs):
-        final_state.update(s)
+        # Validate input
+        if not input_text or not input_text.strip():
+            raise ValidationException(
+                error_message="Input text is required",
+                validation_errors=[ValidationErrorDetail(
+                    field="input",
+                    message="Input text cannot be empty",
+                    invalid_value=input_text,
+                    expected_type="non-empty string"
+                )]
+            )
 
-    return {"output": final_state}
+        human_message = HumanMessage(content=input_text)
+        inputs = {"messages": [human_message]}
+
+        try:
+            final_state = {}
+            for s in agent_graph_app.stream(inputs):
+                final_state.update(s)
+
+            return {"output": final_state}
+
+        except Exception as e:
+            logger.error(f"Agent processing failed: {e}")
+            raise AgentProcessingException(
+                error_message="Agent processing failed",
+                error_details=str(e),
+                processing_step="agent_execution"
+            )
+
+    except (ValidationException, AgentProcessingException):
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in agent endpoint: {e}")
+        raise AgentProcessingException(
+            error_message="Unexpected error in agent processing",
+            error_details=str(e),
+            processing_step="endpoint_handling"
+        )
 
 
 @router.post("/chat", response_model=AgentConversationResponse)

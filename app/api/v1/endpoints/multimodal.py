@@ -23,6 +23,17 @@ from app.api.v1.schemas.multimodal import (
     MultiModalFusionRequest,
     MultiModalFusionResponse
 )
+from app.core.exceptions import (
+    MultiModalProcessingException,
+    ValidationException,
+    ValidationErrorDetail,
+    ExternalServiceException
+)
+from app.core.error_handlers import (
+    create_multimodal_processing_error,
+    create_service_degradation_response
+)
+from app.api.v1.schemas.errors import ERROR_RESPONSES
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +44,11 @@ def get_multimodal_service() -> MultiModalService:
     return MultiModalService()
 
 
-@router.post("/process/audio", response_model=MediaAnalysisResponse)
+@router.post(
+    "/process/audio",
+    response_model=MediaAnalysisResponse,
+    responses=ERROR_RESPONSES
+)
 async def process_audio(
     file: UploadFile = File(...),
     transcribe: bool = Form(True),
@@ -52,25 +67,64 @@ async def process_audio(
     try:
         # Validate file type
         if not file.content_type or not file.content_type.startswith('audio/'):
-            raise HTTPException(status_code=400, detail="File must be an audio file")
-        
+            raise ValidationException(
+                error_message="Invalid file type for audio processing",
+                validation_errors=[ValidationErrorDetail(
+                    field="file",
+                    message="File must be an audio file",
+                    invalid_value=file.content_type,
+                    expected_type="audio/*"
+                )]
+            )
+
         # Read file data
         audio_data = await file.read()
-        
+
         if len(audio_data) == 0:
-            raise HTTPException(status_code=400, detail="Empty audio file")
+            raise ValidationException(
+                error_message="Empty audio file provided",
+                validation_errors=[ValidationErrorDetail(
+                    field="file",
+                    message="Audio file cannot be empty",
+                    invalid_value="0 bytes",
+                    expected_type="non-empty audio file"
+                )]
+            )
         
         # Process audio
         processing_options = {
             'transcribe': transcribe,
             'analyze': analyze
         }
-        
-        result = await multimodal_processor.process_media(
-            media_data=audio_data,
-            media_type='audio',
-            processing_options=processing_options
-        )
+
+        try:
+            result = await multimodal_processor.process_media(
+                media_data=audio_data,
+                media_type='audio',
+                processing_options=processing_options
+            )
+
+            # Check if processing failed
+            if not result.get('success', False):
+                error_details = result.get('error', 'Unknown audio processing error')
+                raise MultiModalProcessingException(
+                    error_message="Audio processing failed",
+                    media_type="audio",
+                    error_details=error_details,
+                    processing_step="audio_processing",
+                    fallback_available=True
+                )
+
+        except MultiModalProcessingException:
+            raise
+        except Exception as e:
+            raise MultiModalProcessingException(
+                error_message="Unexpected error during audio processing",
+                media_type="audio",
+                error_details=str(e),
+                processing_step="audio_processing",
+                fallback_available=False
+            )
         
         # Save to database if conversation_id provided
         if conversation_id and result.get('success'):
@@ -92,11 +146,17 @@ async def process_audio(
             timestamp=result.get('timestamp', datetime.now().isoformat())
         )
         
-    except HTTPException:
+    except (ValidationException, MultiModalProcessingException):
         raise
     except Exception as e:
-        logger.error(f"Audio processing failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Audio processing failed: {str(e)}")
+        logger.error(f"Unexpected error in audio processing endpoint: {e}")
+        raise MultiModalProcessingException(
+            error_message="Unexpected error in audio processing endpoint",
+            media_type="audio",
+            error_details=str(e),
+            processing_step="endpoint_handling",
+            fallback_available=False
+        )
 
 
 @router.post("/process/video", response_model=MediaAnalysisResponse)
