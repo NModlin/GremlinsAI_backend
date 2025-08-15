@@ -7,7 +7,7 @@ including audio, video, image processing and fusion capabilities.
 
 from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class MultiModalProcessRequest(BaseModel):
@@ -20,8 +20,8 @@ class MultiModalProcessRequest(BaseModel):
     )
     conversation_id: Optional[str] = Field(None, description="Optional conversation ID to associate with")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "media_type": "audio",
                 "processing_options": {
@@ -31,6 +31,7 @@ class MultiModalProcessRequest(BaseModel):
                 "conversation_id": "conv_123"
             }
         }
+    )
 
 
 class MediaAnalysisResponse(BaseModel):

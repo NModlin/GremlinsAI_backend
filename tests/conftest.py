@@ -8,6 +8,7 @@ and other shared testing utilities used across all test modules.
 
 import os
 import pytest
+import pytest_asyncio
 import asyncio
 import tempfile
 import shutil
@@ -55,7 +56,7 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session")
 async def test_engine():
     """Create test database engine."""
     # Ensure test data directory exists
@@ -80,34 +81,31 @@ async def test_engine():
     await engine.dispose()
 
 
-@pytest.fixture
-async def test_db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Create a test database session."""
+@pytest_asyncio.fixture
+async def override_get_db(test_engine):
+    """Override the get_db dependency for testing."""
+    # Create a session maker for the test engine
     async_session = async_sessionmaker(
         test_engine, class_=AsyncSession, expire_on_commit=False
     )
-    
-    async with async_session() as session:
-        yield session
-        await session.rollback()
 
-
-@pytest.fixture
-def override_get_db(test_db_session):
-    """Override the get_db dependency for testing."""
     async def _override_get_db():
-        yield test_db_session
-    
+        async with async_session() as session:
+            try:
+                yield session
+            except Exception:
+                await session.rollback()
+                raise
+
     app.dependency_overrides[get_db] = _override_get_db
     yield
     app.dependency_overrides.clear()
 
 
-@pytest.fixture
-def test_client(override_get_db) -> Generator[TestClient, None, None]:
+@pytest_asyncio.fixture
+async def test_client(override_get_db) -> TestClient:
     """Create a test client for the FastAPI application."""
-    with TestClient(app) as client:
-        yield client
+    return TestClient(app)
 
 
 @pytest.fixture
@@ -174,70 +172,85 @@ def mock_multi_agent_response():
 # Test Data Fixtures
 
 @pytest.fixture
-async def sample_conversation(test_db_session) -> Conversation:
+async def sample_conversation(test_engine) -> Conversation:
     """Create a sample conversation for testing."""
-    conversation = Conversation(
-        title="Test Conversation",
-        user_id="test-user-123"
+    async_session = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
     )
-    test_db_session.add(conversation)
-    await test_db_session.commit()
-    await test_db_session.refresh(conversation)
-    return conversation
 
-
-@pytest.fixture
-async def sample_messages(test_db_session, sample_conversation) -> list[Message]:
-    """Create sample messages for testing."""
-    messages = [
-        Message(
-            conversation_id=sample_conversation.id,
-            role="user",
-            content="Hello, this is a test message."
-        ),
-        Message(
-            conversation_id=sample_conversation.id,
-            role="assistant", 
-            content="Hello! This is a test response."
+    async with async_session() as session:
+        conversation = Conversation(
+            title="Test Conversation",
+            user_id="test-user-123"
         )
-    ]
-    
-    for message in messages:
-        test_db_session.add(message)
-    
-    await test_db_session.commit()
-    
-    for message in messages:
-        await test_db_session.refresh(message)
-    
-    return messages
+        session.add(conversation)
+        await session.commit()
+        await session.refresh(conversation)
+        return conversation
 
 
 @pytest.fixture
-async def sample_document(test_db_session) -> Document:
-    """Create a sample document for testing."""
-    document = Document(
-        title="Test Document",
-        content="This is a test document content for testing purposes.",
-        content_type="text/plain",
-        tags=["test", "sample"]
+async def sample_messages(test_engine, sample_conversation) -> list[Message]:
+    """Create sample messages for testing."""
+    async_session = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
     )
-    test_db_session.add(document)
-    await test_db_session.commit()
-    await test_db_session.refresh(document)
-    return document
+
+    async with async_session() as session:
+        messages = [
+            Message(
+                conversation_id=sample_conversation.id,
+                role="user",
+                content="Hello, this is a test message."
+            ),
+            Message(
+                conversation_id=sample_conversation.id,
+                role="assistant",
+                content="Hello! This is a test response."
+            )
+        ]
+
+        for message in messages:
+            session.add(message)
+
+        await session.commit()
+
+        for message in messages:
+            await session.refresh(message)
+
+        return messages
+
+
+@pytest.fixture
+async def sample_document(test_engine) -> Document:
+    """Create a sample document for testing."""
+    async_session = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    async with async_session() as session:
+        document = Document(
+            title="Test Document",
+            content="This is a test document content for testing purposes.",
+            content_type="text/plain",
+            tags=["test", "sample"]
+        )
+        session.add(document)
+        await session.commit()
+        await session.refresh(document)
+        return document
 
 
 # Service Fixtures
 
 @pytest.fixture
-def chat_history_service(test_db_session) -> ChatHistoryService:
+def chat_history_service() -> ChatHistoryService:
     """Create a ChatHistoryService instance for testing."""
     return ChatHistoryService()
 
 
 @pytest.fixture
-def document_service(test_db_session) -> DocumentService:
+def document_service() -> DocumentService:
     """Create a DocumentService instance for testing."""
     return DocumentService()
 
@@ -249,26 +262,44 @@ def mock_external_services():
     """Automatically mock external services for all tests."""
     with patch('app.core.tools.duckduckgo_search') as mock_search, \
          patch('app.core.multi_agent.multi_agent_orchestrator') as mock_multi_agent, \
-         patch('app.core.vector_store.vector_store') as mock_vector:
-        
+         patch('app.core.vector_store.vector_store') as mock_vector, \
+         patch('app.core.service_monitor.check_multimodal_dependencies') as mock_multimodal_check, \
+         patch('app.core.service_monitor.check_openai_availability') as mock_openai_check, \
+         patch('app.core.service_monitor.check_qdrant_availability') as mock_qdrant_check:
+
         # Configure mock search
         mock_search.return_value = "Mock search results for testing"
-        
+
         # Configure mock multi-agent
         mock_multi_agent.execute_workflow = AsyncMock(return_value={
             "result": "Mock multi-agent result",
             "agents_used": ["researcher"],
             "execution_time": 1.0
         })
-        
+
         # Configure mock vector store
         mock_vector.search = AsyncMock(return_value=[])
         mock_vector.add_documents = AsyncMock(return_value=True)
-        
+
+        # Mock service monitoring functions to prevent unavailable service warnings
+        from app.core.exceptions import ServiceStatus
+        mock_service_status = ServiceStatus(
+            service_name="test_service",
+            status="available",
+            fallback_available=True,
+            capabilities_affected=[]
+        )
+        mock_multimodal_check.return_value = [mock_service_status, mock_service_status, mock_service_status]
+        mock_openai_check.return_value = mock_service_status
+        mock_qdrant_check.return_value = mock_service_status
+
         yield {
             "search": mock_search,
             "multi_agent": mock_multi_agent,
-            "vector_store": mock_vector
+            "vector_store": mock_vector,
+            "multimodal_check": mock_multimodal_check,
+            "openai_check": mock_openai_check,
+            "qdrant_check": mock_qdrant_check
         }
 
 

@@ -201,7 +201,7 @@ class GremlinsAIException(HTTPException):
         
         super().__init__(
             status_code=status_code,
-            detail=self.error_response.dict(),
+            detail=self.error_response.model_dump(),
             **kwargs
         )
 

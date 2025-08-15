@@ -49,7 +49,7 @@ class MultiAgentRequest(BaseModel):
 
 class MultiAgentResponse(BaseModel):
     """Schema for multi-agent workflow responses."""
-    output: Dict[str, Any] = Field(..., description="The result of the multi-agent workflow")
+    result: str = Field(..., description="The result of the multi-agent workflow as a string")
     conversation_id: str = Field(..., description="ID of the conversation")
     workflow_type: str = Field(..., description="Type of workflow that was executed")
     agents_used: List[str] = Field(..., description="List of agents that participated")

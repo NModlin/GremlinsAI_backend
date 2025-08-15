@@ -24,10 +24,15 @@ class AgentState(TypedDict):
 
 # 2. Define a simple search function that works with the current setup
 def search_function(query: str) -> str:
-    """Simple wrapper for DuckDuckGo search."""
+    """Simple wrapper for DuckDuckGo search with XSS protection."""
     try:
-        result = duckduckgo_search(query)
-        return f"Search results for '{query}': {result}"
+        # Import sanitization function to prevent XSS in search result formatting
+        from app.core.tools import sanitize_input
+
+        # Sanitize the query before including it in the result string
+        sanitized_query = sanitize_input(query)
+        result = duckduckgo_search(query)  # Original query for search, sanitized for display
+        return f"Search results for '{sanitized_query}': {result}"
     except Exception as e:
         return f"Search failed: {str(e)}"
 

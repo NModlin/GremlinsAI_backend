@@ -42,7 +42,7 @@ async def gremlins_exception_handler(request: Request, exc: GremlinsAIException)
     
     return JSONResponse(
         status_code=exc.status_code,
-        content=exc.error_response.dict(),
+        content=exc.error_response.model_dump(),
         headers={"X-Request-ID": exc.error_response.request_id}
     )
 
@@ -91,7 +91,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     
     return JSONResponse(
         status_code=exc.status_code,
-        content=error_response.dict(),
+        content=error_response.model_dump(),
         headers={"X-Request-ID": error_response.request_id}
     )
 
@@ -107,10 +107,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     for error in exc.errors():
         field_path = " -> ".join(str(loc) for loc in error["loc"])
         
+        # Handle bytes data that can't be JSON serialized
+        invalid_value = error.get("input")
+        if isinstance(invalid_value, bytes):
+            invalid_value = f"<bytes: {invalid_value.decode('utf-8', errors='replace')[:100]}...>"
+
         validation_errors.append(ValidationErrorDetail(
             field=field_path,
             message=error["msg"],
-            invalid_value=error.get("input"),
+            invalid_value=invalid_value,
             expected_type=error.get("type")
         ))
     
@@ -126,13 +131,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         f"Validation Error: {error_message}",
         extra={
             "request_id": validation_exc.error_response.request_id,
-            "validation_errors": [ve.dict() for ve in validation_errors]
+            "validation_errors": [ve.model_dump() for ve in validation_errors]
         }
     )
     
     return JSONResponse(
         status_code=validation_exc.status_code,
-        content=validation_exc.error_response.dict(),
+        content=validation_exc.error_response.model_dump(),
         headers={"X-Request-ID": validation_exc.error_response.request_id}
     )
 
@@ -140,33 +145,34 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
     """
     Handler for SQLAlchemy database errors.
-    
+
     Converts database errors to structured error responses.
     """
     error_message = "Database operation failed"
     error_details = str(exc)
-    
+
     # Don't expose sensitive database details in production
     if "production" in str(request.url).lower():
         error_details = "A database error occurred. Please contact support."
-    
+
     db_exc = DatabaseException(
         error_message=error_message,
         error_details=error_details
     )
-    
+
     logger.error(
-        f"Database Error: {error_message}",
+        f"Database Error: {error_message} - {type(exc).__name__}: {str(exc)}",
         extra={
             "request_id": db_exc.error_response.request_id,
             "exception_type": type(exc).__name__,
-            "error_details": str(exc)
+            "error_details": str(exc),
+            "traceback": traceback.format_exc()
         }
     )
     
     return JSONResponse(
         status_code=db_exc.status_code,
-        content=db_exc.error_response.dict(),
+        content=db_exc.error_response.model_dump(),
         headers={"X-Request-ID": db_exc.error_response.request_id}
     )
 
@@ -198,7 +204,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
     
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content=error_response.dict(),
+        content=error_response.model_dump(),
         headers={"X-Request-ID": error_response.request_id}
     )
 

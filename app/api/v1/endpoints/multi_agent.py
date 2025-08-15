@@ -90,43 +90,72 @@ async def execute_multi_agent_workflow(
         # Store agent interactions in memory
         message_ids = []
         if request.save_conversation:
+            # Create serializable extra_data (avoid complex objects)
+            extra_data = {
+                "workflow_type": request.workflow_type.value,
+                "agents_used": result.get("agents_used", []),
+                "execution_time": execution_time,
+                "task_type": result.get("task_type", "unknown"),
+                "workflow_steps": result.get("workflow_steps", 1)
+            }
+
             # Store the agent workflow result
             agent_message = await ChatHistoryService.add_message(
                 db=db,
                 conversation_id=conversation_id,
                 role="assistant",
                 content=str(result.get("result", "")),
-                extra_data={
-                    "workflow_type": request.workflow_type.value,
-                    "agents_used": result.get("agents_used", []),
-                    "execution_time": execution_time,
-                    "multi_agent_result": result
-                }
+                extra_data=extra_data
             )
             
             if agent_message:
                 message_ids.append(agent_message.id)
             
-            # Store individual agent interactions
+            # Store individual agent interactions with serializable data
             for agent_name in result.get("agents_used", []):
+                # Create serializable input and output data
+                input_data = {
+                    "query": request.input,
+                    "context_prompt": context_prompt[:500] if context_prompt else ""  # Truncate long context
+                }
+                output_data = {
+                    "query": result.get("query", ""),
+                    "result": str(result.get("result", ""))[:1000],  # Truncate long results
+                    "agents_used": result.get("agents_used", []),
+                    "task_type": result.get("task_type", "unknown"),
+                    "note": result.get("note", "")
+                }
+
                 interaction_id = await AgentMemoryService.store_agent_interaction(
                     db=db,
                     conversation_id=conversation_id,
                     agent_name=agent_name,
                     task_type=request.workflow_type.value,
-                    input_data={"query": request.input, "context_prompt": context_prompt},
-                    output_data=result,
+                    input_data=input_data,
+                    output_data=output_data,
                     metadata={"execution_time": execution_time}
                 )
                 if interaction_id:
                     message_ids.append(interaction_id)
         
+        # Extract string result from multi-agent response
+        result_text = ""
+        if isinstance(result, dict):
+            if "output" in result:
+                result_text = str(result["output"])
+            elif "result" in result:
+                result_text = str(result["result"])
+            else:
+                result_text = str(result.get("response", "Multi-agent workflow completed"))
+        else:
+            result_text = str(result)
+
         return MultiAgentResponse(
-            output=result,
+            result=result_text,
             conversation_id=conversation_id,
             workflow_type=request.workflow_type.value,
-            agents_used=result.get("agents_used", []),
-            workflow_steps=result.get("workflow_steps", 1),
+            agents_used=result.get("agents_used", []) if isinstance(result, dict) else [],
+            workflow_steps=result.get("workflow_steps", 1) if isinstance(result, dict) else 1,
             execution_time=execution_time,
             context_used=context_used,
             message_ids=message_ids

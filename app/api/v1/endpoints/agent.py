@@ -27,6 +27,9 @@ router = APIRouter()
 @router.post("/invoke")
 async def invoke_agent_simple(request: dict):
     """Simple agent invocation (backward compatibility)."""
+    import time
+    start_time = time.time()
+
     try:
         input_text = request.get("input", "")
 
@@ -50,7 +53,45 @@ async def invoke_agent_simple(request: dict):
             for s in agent_graph_app.stream(inputs):
                 final_state.update(s)
 
-            return {"output": final_state}
+            logger.info(f"Agent final_state: {final_state}")
+
+            # Extract simple string output from agent response
+            output_text = ""
+
+            # Check if data is nested under 'agent' key
+            agent_data = final_state.get('agent', final_state)
+
+            if "agent_outcome" in agent_data:
+                outcome = agent_data["agent_outcome"]
+                logger.info(f"Agent outcome type: {type(outcome)}, value: {outcome}")
+                # Handle AgentFinish object
+                if hasattr(outcome, 'return_values') and isinstance(outcome.return_values, dict):
+                    output_text = outcome.return_values.get('output', '')
+                    logger.info(f"Extracted from AgentFinish: {output_text}")
+                # Handle dict format
+                elif isinstance(outcome, dict) and 'return_values' in outcome:
+                    output_text = outcome['return_values'].get('output', '')
+                    logger.info(f"Extracted from dict: {output_text}")
+
+            # Also check for messages in agent_data
+            if not output_text and "messages" in agent_data:
+                messages = agent_data["messages"]
+                logger.info(f"Checking messages: {messages}")
+                if messages and len(messages) > 0:
+                    last_message = messages[-1]
+                    if hasattr(last_message, 'content'):
+                        output_text = last_message.content
+                        logger.info(f"Extracted from message: {output_text}")
+
+            if not output_text:
+                output_text = "No response generated"
+                logger.warning(f"No output text found in agent response. Final state: {final_state}")
+
+            execution_time = time.time() - start_time
+            return {
+                "output": output_text,
+                "execution_time": execution_time
+            }
 
         except Exception as e:
             logger.error(f"Agent processing failed: {e}")
@@ -78,27 +119,34 @@ async def invoke_agent_with_conversation(
     db: AsyncSession = Depends(get_db)
 ):
     """Invoke agent with conversation context and history management."""
+    import time
+    start_time = time.time()
+
     try:
         conversation_id = request.conversation_id
         context_used = False
 
-        # Get or create conversation
-        if conversation_id:
-            conversation = await ChatHistoryService.get_conversation(
-                db=db,
-                conversation_id=conversation_id,
-                include_messages=False
-            )
-            if not conversation:
-                raise HTTPException(status_code=404, detail="Conversation not found")
+        # Handle conversation management only if saving is enabled
+        if request.save_conversation:
+            if conversation_id:
+                conversation = await ChatHistoryService.get_conversation(
+                    db=db,
+                    conversation_id=conversation_id,
+                    include_messages=False
+                )
+                if not conversation:
+                    raise HTTPException(status_code=404, detail="Conversation not found")
+            else:
+                # Create new conversation
+                conversation = await ChatHistoryService.create_conversation(
+                    db=db,
+                    title=f"Chat: {request.input[:50]}...",
+                    initial_message=None  # We'll add the message separately
+                )
+                conversation_id = conversation.id
         else:
-            # Create new conversation
-            conversation = await ChatHistoryService.create_conversation(
-                db=db,
-                title=f"Chat: {request.input[:50]}...",
-                initial_message=None  # We'll add the message separately
-            )
-            conversation_id = conversation.id
+            # Don't create conversation if not saving
+            conversation_id = None
 
         # Add user message to conversation if saving is enabled
         user_message = None
@@ -141,7 +189,7 @@ async def invoke_agent_with_conversation(
         else:
             # Use original single-agent system
             context_messages = []
-            if conversation_id:
+            if conversation_id and request.save_conversation:
                 context = await ChatHistoryService.get_conversation_context(
                     db=db,
                     conversation_id=conversation_id,
@@ -168,29 +216,56 @@ async def invoke_agent_with_conversation(
 
             # Extract agent response
             agent_response = ""
-            if "agent_outcome" in final_state:
-                outcome = final_state["agent_outcome"]
-                if isinstance(outcome, dict) and 'return_values' in outcome:
+
+            # Check if data is nested under 'agent' key
+            agent_data = final_state.get('agent', final_state)
+
+            if "agent_outcome" in agent_data:
+                outcome = agent_data["agent_outcome"]
+                # Handle AgentFinish object
+                if hasattr(outcome, 'return_values') and isinstance(outcome.return_values, dict):
+                    agent_response = outcome.return_values.get('output', '')
+                # Handle dict format
+                elif isinstance(outcome, dict) and 'return_values' in outcome:
                     agent_response = outcome['return_values'].get('output', '')
-                elif hasattr(outcome, 'return_values') and 'output' in outcome.return_values:
-                    agent_response = outcome.return_values['output']
+
+            # Also check for messages in agent_data
+            if not agent_response and "messages" in agent_data:
+                messages = agent_data["messages"]
+                if messages and len(messages) > 0:
+                    last_message = messages[-1]
+                    if hasattr(last_message, 'content'):
+                        agent_response = last_message.content
 
         # Save agent response to conversation if saving is enabled
         response_message = None
         if request.save_conversation and agent_response:
+            # Create serializable extra_data
+            extra_data = {
+                "agent_used": True,
+                "execution_time": time.time() - start_time,
+                "context_used": context_used
+            }
+
             response_message = await ChatHistoryService.add_message(
                 db=db,
                 conversation_id=conversation_id,
                 role="assistant",
                 content=agent_response,
-                extra_data={"agent_state": final_state}
+                extra_data=extra_data
             )
 
+        # Extract simple string output from agent response
+        output_text = agent_response if agent_response else "No response generated"
+
+        execution_time = time.time() - start_time
+
         return AgentConversationResponse(
-            output=final_state,
+            output=output_text,
             conversation_id=conversation_id,
-            message_id=response_message.id if response_message else "",
-            context_used=context_used
+            message_id=response_message.id if response_message else None,
+            context_used=context_used,
+            execution_time=execution_time
         )
 
     except HTTPException:

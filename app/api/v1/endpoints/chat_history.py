@@ -72,7 +72,7 @@ async def get_conversation(
 ):
     """Get a specific conversation by ID."""
     try:
-        conversation = await ChatHistoryService.get_conversation(
+        conversation = await ChatHistoryService.get_conversation_detached(
             db=db,
             conversation_id=conversation_id,
             include_messages=include_messages
@@ -253,8 +253,8 @@ async def get_conversation_context(
 
         return ConversationContextResponse(
             conversation_id=conversation_id,
-            context=context,
-            message_count=len(context)
+            messages=context,
+            context_summary=f"Conversation context with {len(context)} messages"
         )
     except HTTPException:
         raise
