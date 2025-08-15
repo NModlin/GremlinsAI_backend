@@ -1,0 +1,179 @@
+.messageInput {
+  width: 100%;
+}
+
+.inputContainer {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  padding: 1rem;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  transition: var(--transition);
+}
+
+.inputContainer:focus-within {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.textarea {
+  flex: 1;
+  min-height: 20px;
+  max-height: 120px;
+  padding: 0.5rem 0;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+}
+
+.textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sendButton {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--border-color);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+
+.sendButton:hover:not(:disabled) {
+  background-color: var(--hover-color);
+}
+
+.sendButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sendButtonActive {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.sendButtonActive:hover:not(:disabled) {
+  background-color: var(--primary-color-dark);
+}
+
+.inputFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.inputHints {
+  flex: 1;
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.charCount {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: 1rem;
+}
+
+.charCountWarning {
+  color: var(--warning-color);
+  font-weight: 500;
+}
+
+/* Mobile styles */
+@media (max-width: 768px) {
+  .inputContainer {
+    padding: 0.75rem;
+  }
+  
+  .textarea {
+    font-size: 1rem; /* Prevent zoom on iOS */
+  }
+  
+  .sendButton {
+    width: 36px;
+    height: 36px;
+  }
+  
+  .inputFooter {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+  
+  .charCount {
+    margin-left: 0;
+  }
+  
+  .hint {
+    display: none; /* Hide hints on mobile to save space */
+  }
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .inputContainer {
+    background-color: var(--surface-color);
+    border-color: var(--border-color);
+  }
+  
+  .textarea {
+    color: var(--text-color);
+  }
+  
+  .textarea::placeholder {
+    color: var(--text-muted);
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .inputContainer {
+    border-width: 2px;
+  }
+  
+  .inputContainer:focus-within {
+    border-width: 2px;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.5);
+  }
+  
+  .sendButton {
+    border: 2px solid var(--border-color);
+  }
+  
+  .sendButtonActive {
+    border-color: var(--primary-color);
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .inputContainer,
+  .sendButton {
+    transition: none;
+  }
+}
