@@ -23,6 +23,53 @@ from app.api.v1.schemas.multi_agent import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+@router.post("/execute")
+async def execute_multi_agent_task(
+    request: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """Execute a multi-agent task with simplified interface."""
+    try:
+        input_text = request.get("input", "")
+        workflow_type = request.get("workflow_type", "simple_research")
+        save_conversation = request.get("save_conversation", True)
+
+        if not input_text:
+            raise HTTPException(status_code=422, detail="Input is required")
+
+        # Execute based on workflow type
+        if workflow_type == "simple_research":
+            result = multi_agent_orchestrator.execute_simple_query(
+                query=input_text,
+                context=request.get("context", "")
+            )
+        elif workflow_type in ["complex_analysis", "research_analyze_write"]:
+            # For complex workflows, use simple query for now
+            result = multi_agent_orchestrator.execute_simple_query(
+                query=input_text,
+                context=request.get("context", "")
+            )
+        else:
+            raise HTTPException(status_code=422, detail=f"Unsupported workflow type: {workflow_type}")
+
+        return {
+            "output": result.get("output", ""),
+            "conversation_id": result.get("conversation_id"),
+            "context_used": result.get("context_used", False),
+            "execution_time": result.get("execution_time", 0.0),
+            "metadata": {
+                "agents_used": result.get("agents_used", []),
+                "workflow_type": workflow_type,
+                "sources": result.get("sources", [])
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Multi-agent execution failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Execution failed: {str(e)}")
+
 @router.post("/workflow", response_model=MultiAgentResponse)
 async def execute_multi_agent_workflow(
     request: MultiAgentRequest,
@@ -189,6 +236,26 @@ async def get_agent_capabilities():
     except Exception as e:
         logger.error(f"Error getting agent capabilities: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve agent capabilities")
+
+@router.get("/memory/{conversation_id}")
+async def get_agent_memory_by_id(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get agent memory for a specific conversation."""
+    try:
+        memory_data = await AgentMemoryService.get_agent_memory(db, conversation_id)
+
+        return {
+            "conversation_id": conversation_id,
+            "agent_context": memory_data.get("agent_context", []),
+            "total_interactions": memory_data.get("total_interactions", 0),
+            "agents_involved": memory_data.get("agents_involved", [])
+        }
+
+    except Exception as e:
+        logger.error(f"Error retrieving agent memory: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve agent memory")
 
 @router.post("/memory", response_model=AgentMemoryResponse)
 async def get_agent_memory(

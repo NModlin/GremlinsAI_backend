@@ -19,50 +19,200 @@ const WS_BASE_URL = 'ws://localhost:8000/api/v1/ws';
 ```
 
 ### Environment Setup
-Create a `.env` file in your frontend project:
+
+Environment variables vary by framework. Choose the appropriate format for your project:
+
+#### React (Create React App)
+Create a `.env` file in your project root:
 ```env
 REACT_APP_API_BASE_URL=http://localhost:8000/api/v1
 REACT_APP_WS_BASE_URL=ws://localhost:8000/api/v1/ws
 REACT_APP_API_KEY=your_api_key_here
+REACT_APP_DEFAULT_USER_ID=default-user
+REACT_APP_REQUEST_TIMEOUT=30000
+REACT_APP_ENABLE_WEBSOCKETS=true
+REACT_APP_DEBUG_MODE=false
+```
+
+#### Vue.js (Vite)
+Create a `.env` file in your project root:
+```env
+VITE_API_BASE_URL=http://localhost:8000/api/v1
+VITE_WS_BASE_URL=ws://localhost:8000/api/v1/ws
+VITE_API_KEY=your_api_key_here
+VITE_DEFAULT_USER_ID=default-user
+VITE_REQUEST_TIMEOUT=30000
+VITE_ENABLE_WEBSOCKETS=true
+VITE_DEBUG_MODE=false
+```
+
+#### Next.js
+Create a `.env.local` file in your project root:
+```env
+# Public variables (available in browser)
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
+NEXT_PUBLIC_WS_BASE_URL=ws://localhost:8000/api/v1/ws
+NEXT_PUBLIC_DEFAULT_USER_ID=default-user
+NEXT_PUBLIC_REQUEST_TIMEOUT=30000
+NEXT_PUBLIC_ENABLE_WEBSOCKETS=true
+
+# Server-side only variables
+GREMLINS_API_KEY=your_api_key_here
+DATABASE_URL=postgresql://user:password@localhost:5432/gremlinsai
+NEXTAUTH_SECRET=your_nextauth_secret
+```
+
+#### Angular
+Create environment files in `src/environments/`:
+
+**environment.ts:**
+```typescript
+export const environment = {
+  production: false,
+  apiBaseUrl: 'http://localhost:8000/api/v1',
+  wsBaseUrl: 'ws://localhost:8000/api/v1/ws',
+  apiKey: 'your_api_key_here',
+  defaultUserId: 'default-user',
+  requestTimeout: 30000,
+  enableWebSockets: true,
+  debugMode: true,
+};
+```
+
+**environment.prod.ts:**
+```typescript
+export const environment = {
+  production: true,
+  apiBaseUrl: 'https://api.yourdomain.com/api/v1',
+  wsBaseUrl: 'wss://api.yourdomain.com/api/v1/ws',
+  apiKey: process.env['GREMLINS_API_KEY'] || '',
+  defaultUserId: 'default-user',
+  requestTimeout: 30000,
+  enableWebSockets: true,
+  debugMode: false,
+};
 ```
 
 ## Authentication
 
 ### API Key Authentication
-GremlinsAI uses API key authentication for secure access:
+GremlinsAI uses API key authentication for secure access. Here's how to set up the API client using the native fetch API:
 
-```javascript
-const apiClient = axios.create({
-  baseURL: process.env.REACT_APP_API_BASE_URL,
-  headers: {
-    'Authorization': `Bearer ${process.env.REACT_APP_API_KEY}`,
-    'Content-Type': 'application/json'
-  }
-});
-```
+```typescript
+class GremlinsAPIClient {
+  private baseURL: string;
+  private apiKey: string;
+  private requestTimeout: number;
 
-### Request Interceptor Setup
-```javascript
-apiClient.interceptors.request.use(
-  (config) => {
-    // Add request ID for tracking
-    config.headers['X-Request-ID'] = generateRequestId();
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
-
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    // Handle common errors
-    if (error.response?.status === 401) {
-      // Handle authentication error
-      redirectToLogin();
+  constructor(baseURL: string, apiKey: string, options?: { timeout?: number }) {
+    if (!baseURL) {
+      throw new Error('API base URL is required');
     }
-    return Promise.reject(error);
+    if (!apiKey || apiKey.trim() === '') {
+      throw new Error('API key is required and cannot be empty');
+    }
+
+    this.baseURL = baseURL;
+    this.apiKey = apiKey.trim();
+    this.requestTimeout = options?.timeout || 30000;
   }
-);
+
+  private async makeRequest<T>(
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    endpoint: string,
+    data?: any,
+    params?: Record<string, any>
+  ): Promise<T> {
+    const url = new URL(endpoint, this.baseURL);
+
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        url.searchParams.append(key, String(value));
+      });
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.requestTimeout);
+
+    try {
+      const response = await fetch(url.toString(), {
+        method,
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'X-Request-ID': this.generateRequestId(),
+          'X-Client-Version': '1.0.0',
+        },
+        body: data ? JSON.stringify(data) : undefined,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(this.handleError({ response: { data: errorData, status: response.status } }));
+      }
+
+      return response.json();
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+
+      if (error.name === 'AbortError') {
+        throw new Error('Request timeout - please try again');
+      }
+
+      throw error;
+    }
+  }
+
+  private generateRequestId(): string {
+    return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  private handleError(error: any): string {
+    if (error.response?.data) {
+      const status = error.response.status;
+
+      switch (status) {
+        case 401:
+          return 'Authentication failed. Please check your API key.';
+        case 403:
+          return 'Access forbidden. You do not have permission to perform this action.';
+        case 404:
+          return 'Resource not found. Please check the request URL.';
+        case 429:
+          return 'Too many requests. Please wait before trying again.';
+        case 500:
+          return 'Server error. Please try again later.';
+        default:
+          return error.response.data.error_message || 'An unexpected error occurred.';
+      }
+    }
+
+    return error.message || 'Network error occurred.';
+  }
+}
+
+// Create API client instance
+const createAPIClient = (): GremlinsAPIClient => {
+  const baseURL = process.env.REACT_APP_API_BASE_URL; // Adjust prefix for your framework
+  const apiKey = process.env.REACT_APP_API_KEY;
+
+  if (!baseURL) {
+    throw new Error('API base URL environment variable is required');
+  }
+
+  if (!apiKey) {
+    throw new Error('API key environment variable is required');
+  }
+
+  return new GremlinsAPIClient(baseURL, apiKey, {
+    timeout: parseInt(process.env.REACT_APP_REQUEST_TIMEOUT || '30000', 10)
+  });
+};
+
+const apiClient = createAPIClient();
 ```
 
 ## API Endpoints
@@ -152,7 +302,7 @@ async function getUserConversations(userId = 'default-user', limit = 20, offset 
 ```javascript
 async function executeMultiAgentWorkflow(input, workflowType = 'research_analyze_write') {
   try {
-    const response = await apiClient.post('/multi-agent/workflow', {
+    const response = await apiClient.post('/multi-agent/execute', {
       input,
       workflow_type: workflowType,
       save_conversation: true
@@ -160,6 +310,306 @@ async function executeMultiAgentWorkflow(input, workflowType = 'research_analyze
     return response.data;
   } catch (error) {
     throw new Error(`Multi-agent workflow failed: ${error.message}`);
+  }
+}
+```
+
+#### Get Agent Capabilities
+```javascript
+async function getAgentCapabilities() {
+  try {
+    const response = await apiClient.get('/multi-agent/capabilities');
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to get agent capabilities: ${error.message}`);
+  }
+}
+```
+
+### Document Management & RAG
+
+#### Upload Document
+```javascript
+async function uploadDocument(file, metadata = {}) {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('metadata', JSON.stringify(metadata));
+
+    const response = await fetch(`${API_BASE_URL}/documents/upload`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Upload failed: ${response.statusText}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    throw new Error(`Document upload failed: ${error.message}`);
+  }
+}
+```
+
+#### Search Documents
+```javascript
+async function searchDocuments(query, options = {}) {
+  try {
+    const response = await apiClient.post('/documents/search', {
+      query,
+      limit: options.limit || 10,
+      threshold: options.threshold || 0.7,
+      filters: options.filters || {}
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(`Document search failed: ${error.message}`);
+  }
+}
+```
+
+#### Get Document by ID
+```javascript
+async function getDocument(documentId) {
+  try {
+    const response = await apiClient.get(`/documents/${documentId}`);
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to get document: ${error.message}`);
+  }
+}
+```
+
+### Task Orchestration
+
+#### Create Task
+```javascript
+async function createTask(taskData) {
+  try {
+    const response = await apiClient.post('/orchestrator/tasks', {
+      name: taskData.name,
+      type: taskData.type,
+      parameters: taskData.parameters,
+      priority: taskData.priority || 'medium',
+      scheduled_for: taskData.scheduledFor
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(`Task creation failed: ${error.message}`);
+  }
+}
+```
+
+#### Get Task Status
+```javascript
+async function getTaskStatus(taskId) {
+  try {
+    const response = await apiClient.get(`/orchestrator/tasks/${taskId}`);
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to get task status: ${error.message}`);
+  }
+}
+```
+
+#### List Tasks
+```javascript
+async function listTasks(filters = {}) {
+  try {
+    const response = await apiClient.get('/orchestrator/tasks', {
+      params: {
+        status: filters.status,
+        type: filters.type,
+        limit: filters.limit || 20,
+        offset: filters.offset || 0
+      }
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to list tasks: ${error.message}`);
+  }
+}
+```
+
+### Real-time API
+
+#### Subscribe to Events
+```javascript
+async function subscribeToEvents(eventTypes, callback) {
+  try {
+    const response = await apiClient.post('/realtime/subscribe', {
+      event_types: eventTypes,
+      callback_url: callback
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(`Subscription failed: ${error.message}`);
+  }
+}
+```
+
+#### Get Real-time Status
+```javascript
+async function getRealtimeStatus() {
+  try {
+    const response = await apiClient.get('/realtime/status');
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to get real-time status: ${error.message}`);
+  }
+}
+```
+
+### Multi-Modal Processing
+
+#### Process Audio
+```javascript
+async function processAudio(audioFile, options = {}) {
+  try {
+    const formData = new FormData();
+    formData.append('audio', audioFile);
+    formData.append('options', JSON.stringify({
+      transcribe: options.transcribe !== false,
+      language: options.language || 'auto',
+      format: options.format || 'wav'
+    }));
+
+    const response = await fetch(`${API_BASE_URL}/multimodal/audio`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Audio processing failed: ${response.statusText}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    throw new Error(`Audio processing failed: ${error.message}`);
+  }
+}
+```
+
+#### Process Image
+```javascript
+async function processImage(imageFile, options = {}) {
+  try {
+    const formData = new FormData();
+    formData.append('image', imageFile);
+    formData.append('options', JSON.stringify({
+      analyze: options.analyze !== false,
+      extract_text: options.extractText || false,
+      detect_objects: options.detectObjects || false
+    }));
+
+    const response = await fetch(`${API_BASE_URL}/multimodal/image`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Image processing failed: ${response.statusText}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    throw new Error(`Image processing failed: ${error.message}`);
+  }
+}
+```
+
+### GraphQL API
+
+#### Execute GraphQL Query
+```javascript
+async function executeGraphQLQuery(query, variables = {}) {
+  try {
+    const response = await fetch(`${API_BASE_URL.replace('/api/v1', '')}/graphql`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query,
+        variables
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`GraphQL query failed: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+
+    if (result.errors) {
+      throw new Error(`GraphQL errors: ${result.errors.map(e => e.message).join(', ')}`);
+    }
+
+    return result.data;
+  } catch (error) {
+    throw new Error(`GraphQL query failed: ${error.message}`);
+  }
+}
+```
+
+#### Example GraphQL Queries
+```javascript
+// Get conversation with messages
+const GET_CONVERSATION = `
+  query GetConversation($id: ID!) {
+    conversation(id: $id) {
+      id
+      title
+      createdAt
+      messages {
+        id
+        role
+        content
+        createdAt
+      }
+    }
+  }
+`;
+
+// Execute the query
+const conversationData = await executeGraphQLQuery(GET_CONVERSATION, {
+  id: 'conversation-id'
+});
+```
+
+### Developer Portal Integration
+
+#### Get API Documentation
+```javascript
+async function getAPIDocumentation() {
+  try {
+    const response = await apiClient.get('/developer-portal/docs');
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to get API documentation: ${error.message}`);
+  }
+}
+```
+
+#### Get SDK Information
+```javascript
+async function getSDKInfo() {
+  try {
+    const response = await apiClient.get('/developer-portal/sdks');
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to get SDK information: ${error.message}`);
   }
 }
 ```
@@ -456,6 +906,173 @@ interface MultiAgentWorkflowRequest {
   workflow_type: 'research_analyze_write' | 'simple_research' | 'complex_analysis';
   save_conversation?: boolean;
 }
+
+// WebSocket Types
+interface WebSocketMessage {
+  type: 'chat' | 'agent_response' | 'error' | 'status' | 'ping' | 'pong';
+  data: any;
+  timestamp: string;
+  request_id?: string;
+}
+
+interface WebSocketConfig {
+  url: string;
+  apiKey: string;
+  reconnectAttempts?: number;
+  reconnectDelay?: number;
+  heartbeatInterval?: number;
+}
+
+// Hook Return Types
+interface UseGremlinsAPIReturn {
+  conversations: ConversationResponse[];
+  currentConversation: ConversationResponse | null;
+  messages: MessageResponse[];
+  isLoading: boolean;
+  error: string | null;
+  sendMessage: (input: string, conversationId?: string) => Promise<void>;
+  createConversation: (title: string) => Promise<ConversationResponse>;
+  switchConversation: (conversationId: string) => Promise<void>;
+  loadMoreMessages: () => Promise<void>;
+  refreshConversations: () => Promise<void>;
+  clearError: () => void;
+}
+
+interface UseWebSocketReturn {
+  connectionStatus: 'connecting' | 'connected' | 'disconnected' | 'error';
+  lastMessage: WebSocketMessage | null;
+  sendMessage: (message: Omit<WebSocketMessage, 'timestamp'>) => void;
+  connect: () => void;
+  disconnect: () => void;
+}
+
+interface UseConversationsReturn {
+  conversations: ConversationResponse[];
+  currentConversation: ConversationResponse | null;
+  isLoading: boolean;
+  error: string | null;
+  hasMore: boolean;
+  loadConversations: (reset?: boolean) => Promise<void>;
+  createConversation: (title: string) => Promise<ConversationResponse>;
+  selectConversation: (conversation: ConversationResponse) => void;
+  deleteConversation: (conversationId: string) => Promise<void>;
+  updateConversationTitle: (conversationId: string, title: string) => Promise<void>;
+  refreshConversations: () => Promise<void>;
+  loadMoreConversations: () => Promise<void>;
+  clearError: () => void;
+}
+
+// Component Props Types
+interface ChatInterfaceProps {
+  className?: string;
+  onConversationChange?: (conversation: ConversationResponse | null) => void;
+  onMessageSent?: (message: MessageResponse) => void;
+  onError?: (error: string) => void;
+}
+
+interface MessageListProps {
+  messages: MessageResponse[];
+  isLoading?: boolean;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  className?: string;
+}
+
+interface MessageInputProps {
+  onSendMessage: (input: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  maxLength?: number;
+  className?: string;
+}
+
+interface ConversationSidebarProps {
+  conversations: ConversationResponse[];
+  currentConversation: ConversationResponse | null;
+  onConversationSelect: (conversation: ConversationResponse) => void;
+  onNewConversation: () => void;
+  isLoading?: boolean;
+  className?: string;
+}
+
+// Utility Types
+interface OptimisticMessage extends Omit<MessageResponse, 'id'> {
+  id: string;
+  isOptimistic?: boolean;
+  isPending?: boolean;
+  error?: string;
+}
+
+interface RateLimitHandler {
+  makeRequest<T>(requestFn: () => Promise<T>): Promise<T>;
+}
+
+// Document Types
+interface DocumentMetadata {
+  title?: string;
+  description?: string;
+  tags?: string[];
+  category?: string;
+}
+
+interface DocumentResponse {
+  id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  metadata: DocumentMetadata;
+  created_at: string;
+  updated_at: string;
+}
+
+interface DocumentSearchRequest {
+  query: string;
+  limit?: number;
+  threshold?: number;
+  filters?: Record<string, any>;
+}
+
+// Task Types
+interface TaskRequest {
+  name: string;
+  type: string;
+  parameters: Record<string, any>;
+  priority?: 'low' | 'medium' | 'high';
+  scheduledFor?: string;
+}
+
+interface TaskResponse {
+  id: string;
+  name: string;
+  type: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  parameters: Record<string, any>;
+  result?: any;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Multi-modal Types
+interface AudioProcessingOptions {
+  transcribe?: boolean;
+  language?: string;
+  format?: string;
+}
+
+interface ImageProcessingOptions {
+  analyze?: boolean;
+  extractText?: boolean;
+  detectObjects?: boolean;
+}
+
+interface MultiModalResponse {
+  id: string;
+  type: 'audio' | 'image' | 'video';
+  processing_status: 'processing' | 'completed' | 'failed';
+  results: Record<string, any>;
+  created_at: string;
+}
 ```
 
 ### API Client Class
@@ -540,6 +1157,76 @@ class GremlinsAPIClient {
     return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 }
+```
+
+## Testing
+
+### Unit Testing
+
+#### Testing API Client
+```typescript
+// api.test.ts
+import { GremlinsAPIClient } from './api';
+
+global.fetch = jest.fn();
+const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
+
+describe('GremlinsAPIClient', () => {
+  let apiClient: GremlinsAPIClient;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    apiClient = new GremlinsAPIClient('https://api.test.com/v1', 'test-key');
+  });
+
+  it('makes authenticated requests', async () => {
+    const mockResponse = { output: 'Test response' };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockResponse,
+    } as Response);
+
+    const result = await apiClient.invokeAgent('Test input');
+    expect(result).toEqual(mockResponse);
+  });
+});
+```
+
+#### Testing React Components
+```typescript
+// ChatInterface.test.tsx
+import { render, screen, fireEvent } from '@testing-library/react';
+import { ChatInterface } from './ChatInterface';
+
+jest.mock('../hooks/useGremlinsAPI', () => ({
+  useGremlinsAPI: () => ({
+    messages: [],
+    sendMessage: jest.fn(),
+  }),
+}));
+
+describe('ChatInterface', () => {
+  it('renders welcome screen', () => {
+    render(<ChatInterface />);
+    expect(screen.getByText('Welcome to GremlinsAI')).toBeInTheDocument();
+  });
+});
+```
+
+### End-to-End Testing
+
+#### Cypress Configuration
+```typescript
+// cypress/e2e/chat-flow.cy.ts
+describe('Chat Flow', () => {
+  it('completes full chat interaction', () => {
+    cy.intercept('POST', '/api/v1/agent/chat', { fixture: 'chat-response.json' });
+    cy.visit('/');
+    cy.get('[data-testid="message-input"]').type('Hello');
+    cy.get('[data-testid="send-button"]').click();
+    cy.get('[data-testid="message-list"]').should('contain', 'Hello');
+  });
+});
 ```
 
 ## Best Practices

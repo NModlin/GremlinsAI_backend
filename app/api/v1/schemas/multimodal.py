@@ -77,14 +77,15 @@ class AudioProcessingOptions(BaseModel):
     analyze: bool = Field(False, description="Whether to perform audio analysis")
     language: Optional[str] = Field(None, description="Expected language for transcription")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "transcribe": True,
                 "analyze": True,
                 "language": "en"
             }
         }
+    )
 
 
 class VideoProcessingOptions(BaseModel):
@@ -95,8 +96,8 @@ class VideoProcessingOptions(BaseModel):
     analyze: bool = Field(False, description="Whether to perform video analysis")
     frame_count: int = Field(10, description="Number of frames to extract", ge=1, le=100)
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "extract_frames": True,
                 "transcribe_audio": True,
@@ -104,6 +105,7 @@ class VideoProcessingOptions(BaseModel):
                 "frame_count": 15
             }
         }
+    )
 
 
 class ImageProcessingOptions(BaseModel):
@@ -114,8 +116,8 @@ class ImageProcessingOptions(BaseModel):
     enhance: bool = Field(False, description="Whether to enhance image quality")
     analyze: bool = Field(True, description="Whether to perform image analysis")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "detect_objects": True,
                 "extract_text": True,
@@ -123,6 +125,7 @@ class ImageProcessingOptions(BaseModel):
                 "analyze": True
             }
         }
+    )
 
 
 class MultiModalFusionRequest(BaseModel):

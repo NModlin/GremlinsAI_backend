@@ -56,7 +56,7 @@ def event_loop():
     loop.close()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="function")
 async def test_engine():
     """Create test database engine."""
     # Ensure test data directory exists
@@ -339,3 +339,55 @@ def assert_valid_timestamp(timestamp_string: str):
         datetime.fromisoformat(timestamp_string.replace('Z', '+00:00'))
     except ValueError:
         pytest.fail(f"'{timestamp_string}' is not a valid ISO timestamp")
+
+
+def assert_sanitized_input(original_input: str, processed_input: str):
+    """Assert that input has been properly sanitized."""
+    # Check that malicious content has been removed or neutralized
+    processed_lower = processed_input.lower()
+
+    # Should not contain script tags
+    assert "<script>" not in processed_lower
+    assert "</script>" not in processed_lower
+
+    # Should not contain javascript: protocols
+    assert "javascript:" not in processed_lower
+
+    # Should not contain event handlers
+    assert "onerror=" not in processed_lower
+    assert "onclick=" not in processed_lower
+    assert "onload=" not in processed_lower
+
+    # Should not contain data: URLs with scripts
+    assert "data:text/html" not in processed_lower
+
+
+def assert_error_response_format(response_data: dict, expected_status: int = None):
+    """Assert that error response follows consistent format."""
+    assert "detail" in response_data
+    assert isinstance(response_data["detail"], (str, list))
+
+    if isinstance(response_data["detail"], list):
+        # Pydantic validation errors
+        for error in response_data["detail"]:
+            assert "loc" in error
+            assert "msg" in error
+            assert "type" in error
+
+    # Optional error code for structured errors
+    if "error_code" in response_data:
+        assert isinstance(response_data["error_code"], str)
+        assert response_data["error_code"].startswith("GREMLINS_")
+
+
+def assert_multimodal_response_structure(response_data: dict, media_type: str):
+    """Assert multimodal processing response structure."""
+    expected_keys = ["id", "type", "processing_status", "results", "created_at", "processing_time"]
+    assert_response_structure(response_data, expected_keys)
+
+    assert response_data["type"] == media_type
+    assert response_data["processing_status"] in ["pending", "processing", "completed", "failed"]
+    assert isinstance(response_data["results"], dict)
+    assert_valid_timestamp(response_data["created_at"])
+    assert isinstance(response_data["processing_time"], (int, float))
+    assert response_data["processing_time"] >= 0

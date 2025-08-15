@@ -1,5 +1,7 @@
 # app/api/v1/endpoints/agent.py
 import logging
+import html
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -23,6 +25,33 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+def sanitize_input(text: str) -> str:
+    """Sanitize user input to prevent XSS and other injection attacks."""
+    if not text:
+        return text
+
+    # Remove potentially dangerous HTML/JavaScript patterns
+    dangerous_patterns = [
+        r'<script[^>]*>.*?</script>',
+        r'javascript:',
+        r'on\w+\s*=',
+        r'<iframe[^>]*>.*?</iframe>',
+        r'<object[^>]*>.*?</object>',
+        r'<embed[^>]*>.*?</embed>',
+        r'<link[^>]*>',
+        r'<meta[^>]*>',
+        r'<style[^>]*>.*?</style>'
+    ]
+
+    sanitized = text
+    for pattern in dangerous_patterns:
+        sanitized = re.sub(pattern, '', sanitized, flags=re.IGNORECASE | re.DOTALL)
+
+    # HTML escape remaining content
+    sanitized = html.escape(sanitized)
+
+    return sanitized
+
 # Keep the original simple endpoint for backward compatibility
 @router.post("/invoke")
 async def invoke_agent_simple(request: dict):
@@ -45,7 +74,10 @@ async def invoke_agent_simple(request: dict):
                 )]
             )
 
-        human_message = HumanMessage(content=input_text)
+        # Sanitize input to prevent XSS and injection attacks
+        sanitized_input = sanitize_input(input_text)
+
+        human_message = HumanMessage(content=sanitized_input)
         inputs = {"messages": [human_message]}
 
         try:
@@ -87,9 +119,12 @@ async def invoke_agent_simple(request: dict):
                 output_text = "No response generated"
                 logger.warning(f"No output text found in agent response. Final state: {final_state}")
 
+            # Sanitize output to prevent XSS in responses
+            sanitized_output = sanitize_input(output_text)
+
             execution_time = time.time() - start_time
             return {
-                "output": output_text,
+                "output": sanitized_output,
                 "execution_time": execution_time
             }
 
