@@ -29,6 +29,7 @@ async def execute_multi_agent_task(
     db: AsyncSession = Depends(get_db)
 ):
     """Execute a multi-agent task with simplified interface."""
+    start_time = time.time()
     try:
         input_text = request.get("input", "")
         workflow_type = request.get("workflow_type", "simple_research")
@@ -52,11 +53,16 @@ async def execute_multi_agent_task(
         else:
             raise HTTPException(status_code=422, detail=f"Unsupported workflow type: {workflow_type}")
 
+        execution_time = time.time() - start_time
+
+        # Determine if context was used
+        context_used = bool(request.get("conversation_id") or request.get("context"))
+
         return {
-            "output": result.get("output", ""),
-            "conversation_id": result.get("conversation_id"),
-            "context_used": result.get("context_used", False),
-            "execution_time": result.get("execution_time", 0.0),
+            "output": result.get("result", ""),  # Map 'result' to 'output'
+            "conversation_id": request.get("conversation_id"),
+            "context_used": context_used,
+            "execution_time": execution_time,
             "metadata": {
                 "agents_used": result.get("agents_used", []),
                 "workflow_type": workflow_type,
@@ -235,7 +241,7 @@ async def get_agent_capabilities():
         
     except Exception as e:
         logger.error(f"Error getting agent capabilities: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve agent capabilities")
+        raise HTTPException(status_code=500, detail="Failed to get agent capabilities")
 
 @router.get("/memory/{conversation_id}")
 async def get_agent_memory_by_id(
@@ -248,8 +254,9 @@ async def get_agent_memory_by_id(
 
         return {
             "conversation_id": conversation_id,
-            "agent_context": memory_data.get("agent_context", []),
-            "total_interactions": memory_data.get("total_interactions", 0),
+            "memory_entries": memory_data.get("agent_context", []),
+            "total_entries": memory_data.get("total_interactions", 0),
+            "memory_size": len(memory_data.get("agent_context", [])),
             "agents_involved": memory_data.get("agents_involved", [])
         }
 
@@ -257,7 +264,49 @@ async def get_agent_memory_by_id(
         logger.error(f"Error retrieving agent memory: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve agent memory")
 
-@router.post("/memory", response_model=AgentMemoryResponse)
+@router.post("/memory")
+async def create_agent_memory(
+    request: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new agent memory entry."""
+    try:
+        # Extract fields from request
+        conversation_id = request.get("conversation_id")
+        agent_name = request.get("agent_name")
+        memory_content = request.get("memory_content")
+        importance_score = request.get("importance_score", 0.5)
+        memory_type = request.get("memory_type", "general")
+
+        if not all([conversation_id, agent_name, memory_content]):
+            raise HTTPException(status_code=422, detail="Missing required fields")
+
+        # Create memory entry using the service
+        memory_entry = await AgentMemoryService.create_memory_entry(
+            db=db,
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+            content=memory_content,
+            importance=importance_score,
+            memory_type=memory_type
+        )
+
+        return {
+            "id": memory_entry.get("id", f"memory-{conversation_id[:8]}"),
+            "conversation_id": conversation_id,
+            "agent_name": agent_name,
+            "content": memory_content,
+            "importance": importance_score,
+            "created_at": memory_entry.get("created_at", "2023-01-01T00:00:00Z")
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating agent memory: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create agent memory")
+
+@router.post("/memory/retrieve", response_model=AgentMemoryResponse)
 async def get_agent_memory(
     request: AgentMemoryRequest,
     db: AsyncSession = Depends(get_db)
@@ -271,21 +320,21 @@ async def get_agent_memory(
             task_type=request.task_type,
             max_interactions=request.max_interactions
         )
-        
+
         # Get list of agents involved
         agents_involved = list(set(
-            interaction.get("agent_name", "unknown") 
+            interaction.get("agent_name", "unknown")
             for interaction in agent_context
             if interaction.get("agent_name")
         ))
-        
+
         return AgentMemoryResponse(
             conversation_id=request.conversation_id,
             agent_context=agent_context,
             total_interactions=len(agent_context),
             agents_involved=agents_involved
         )
-        
+
     except Exception as e:
         logger.error(f"Error retrieving agent memory: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve agent memory")

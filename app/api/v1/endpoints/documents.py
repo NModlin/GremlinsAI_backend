@@ -30,32 +30,8 @@ from app.api.v1.schemas.documents import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-def sanitize_filename(filename: str) -> str:
-    """Sanitize filename to prevent path traversal and other security issues."""
-    if not filename:
-        return "untitled"
-
-    # Remove path traversal attempts
-    filename = os.path.basename(filename)
-
-    # Remove dangerous characters
-    dangerous_chars = ['<', '>', ':', '"', '|', '?', '*', '\\', '/', '..']
-    for char in dangerous_chars:
-        filename = filename.replace(char, '_')
-
-    # Remove leading/trailing dots and spaces
-    filename = filename.strip('. ')
-
-    # Ensure filename is not empty after sanitization
-    if not filename or filename in ['', '.', '..']:
-        filename = "untitled"
-
-    # Limit filename length
-    if len(filename) > 255:
-        name, ext = os.path.splitext(filename)
-        filename = name[:250] + ext
-
-    return filename
+# Import sanitize_filename from security module for consistent sanitization
+from app.core.security import sanitize_filename
 
 @router.post("/upload")
 async def upload_document(

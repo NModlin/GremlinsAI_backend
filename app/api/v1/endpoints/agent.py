@@ -2,7 +2,7 @@
 import logging
 import html
 import re
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
@@ -24,6 +24,19 @@ from app.core.exceptions import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+@router.options("/chat")
+async def chat_options():
+    """Handle OPTIONS request for CORS preflight."""
+    from app.core.security import get_cors_headers
+
+    response = Response(status_code=200)
+    cors_headers = get_cors_headers()
+
+    for header, value in cors_headers.items():
+        response.headers[header] = value
+
+    return response
 
 def sanitize_input(text: str) -> str:
     """Sanitize user input to prevent XSS and other injection attacks."""

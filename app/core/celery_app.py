@@ -4,27 +4,47 @@ Handles asynchronous task execution and orchestration.
 """
 
 import os
+import logging
 from celery import Celery
 from kombu import Queue
+
+logger = logging.getLogger(__name__)
 
 # Create Celery app instance
 def create_celery_app() -> Celery:
     """Create and configure Celery application."""
-    
+
     # Redis URL for broker and backend
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    
-    # Create Celery instance
-    celery_app = Celery(
-        'gremlinsai',
-        broker=redis_url,
-        backend=redis_url,
-        include=[
-            'app.tasks.agent_tasks',
-            'app.tasks.document_tasks',
-            'app.tasks.orchestration_tasks'
-        ]
-    )
+
+    # Check if we're in testing mode
+    is_testing = os.getenv("TESTING", "false").lower() == "true"
+
+    if is_testing:
+        # Use memory transport for testing
+        logger.info("Using memory transport for Celery in testing mode")
+        celery_app = Celery(
+            'gremlinsai',
+            broker='memory://',
+            backend='cache+memory://',
+            include=[
+                'app.tasks.agent_tasks',
+                'app.tasks.document_tasks',
+                'app.tasks.orchestration_tasks'
+            ]
+        )
+    else:
+        # Create Celery instance with Redis
+        celery_app = Celery(
+            'gremlinsai',
+            broker=redis_url,
+            backend=redis_url,
+            include=[
+                'app.tasks.agent_tasks',
+                'app.tasks.document_tasks',
+                'app.tasks.orchestration_tasks'
+            ]
+        )
     
     # Configure Celery
     celery_app.conf.update(

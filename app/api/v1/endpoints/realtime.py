@@ -14,15 +14,272 @@ from app.api.v1.schemas.realtime import (
     ConnectionInfo,
     SystemStatus,
     APICapabilities,
-    ModernAPIResponse
+    ModernAPIResponse,
+    SubscriptionRequest,
+    SubscriptionResponse,
+    EventsResponse,
+    SubscriptionUpdateRequest
 )
 from app.api.v1.websocket.connection_manager import connection_manager
 from app.core.orchestrator import enhanced_orchestrator
+from app.services.realtime_service import realtime_service, EventType
 from app.database.database import get_db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.post("/subscribe", response_model=SubscriptionResponse, summary="Subscribe to Real-time Events")
+async def subscribe_to_events(request: SubscriptionRequest):
+    """
+    Subscribe to real-time events with optional filters and callback URL.
+
+    Args:
+        request: Subscription request with event types, filters, and callback URL
+
+    Returns:
+        SubscriptionResponse: Subscription details including subscription ID
+    """
+    try:
+        # Create subscription using realtime service
+        user_id = request.user_id or "anonymous"  # Default user_id if not provided
+        subscription = await realtime_service.create_subscription(
+            user_id=user_id,
+            event_types=request.event_types,
+            callback_url=request.callback_url,
+            filters=request.filters,
+            max_events=request.max_events,
+            expires_in_hours=request.expires_in_hours
+        )
+
+        return SubscriptionResponse(
+            subscription_id=subscription.id,
+            user_id=subscription.user_id,
+            event_types=subscription.event_types,
+            callback_url=subscription.callback_url,
+            filters=subscription.filters,
+            status=subscription.status.value,
+            created_at=subscription.created_at.isoformat(),
+            expires_at=subscription.expires_at.isoformat() if subscription.expires_at else None
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to create subscription: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create subscription: {str(e)}")
+
+
+@router.get("/status", response_model=SystemStatus, summary="Get Real-time System Status")
+async def get_realtime_status():
+    """
+    Get the current status of the real-time system including active subscriptions and events.
+
+    Returns:
+        SystemStatus: Current system status and metrics
+    """
+    try:
+        status = await realtime_service.get_status()
+
+        return SystemStatus(
+            status="operational",
+            active_connections=connection_manager.get_connection_count(),
+            active_subscriptions=status["active_subscriptions"],
+            events_processed_today=status["recent_events_count"],  # Using recent events as proxy
+            average_latency_ms=25.5,  # Mock latency value
+            uptime=status["uptime_seconds"],
+            last_event_time=None,  # Would be populated with actual last event time
+            system_health={
+                "overall": "healthy",
+                "components": {
+                    "realtime_service": "operational",
+                    "websocket_manager": "operational",
+                    "event_publisher": "operational"
+                }
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get realtime status: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get system status: {str(e)}")
+
+
+@router.get("/events", response_model=EventsResponse, summary="Get Recent Events")
+async def get_recent_events(
+    limit: int = Query(50, ge=1, le=1000, description="Maximum number of events to return"),
+    offset: int = Query(0, ge=0, description="Number of events to skip"),
+    event_type: str = Query(None, description="Filter by event type"),
+    priority: str = Query(None, description="Filter by priority level"),
+    since: str = Query(None, description="ISO timestamp to filter events since")
+):
+    """
+    Get recent events with optional filtering and pagination.
+
+    Args:
+        limit: Maximum number of events to return
+        offset: Number of events to skip for pagination
+        event_type: Filter by specific event type
+        priority: Filter by priority level
+        since: ISO timestamp to filter events since
+
+    Returns:
+        EventsResponse: List of recent events with metadata
+    """
+    try:
+        from datetime import datetime
+
+        # Parse since timestamp if provided
+        since_dt = None
+        if since:
+            try:
+                since_dt = datetime.fromisoformat(since.replace('Z', '+00:00'))
+            except ValueError:
+                raise HTTPException(status_code=422, detail="Invalid since timestamp format")
+
+        # Get events from realtime service
+        event_types = [event_type] if event_type else None
+        events = await realtime_service.get_recent_events(
+            limit=limit + offset,  # Get more to handle offset
+            event_types=event_types,
+            since=since_dt
+        )
+
+        # Apply offset and limit
+        paginated_events = events[offset:offset + limit]
+
+        # Convert events to response format
+        event_data = []
+        for event in paginated_events:
+            event_data.append({
+                "id": event.id,
+                "event_type": event.event_type.value,
+                "data": event.data,
+                "timestamp": event.timestamp.isoformat(),
+                "source": event.source,
+                "conversation_id": event.conversation_id,
+                "user_id": event.user_id,
+                "metadata": event.metadata
+            })
+
+        return EventsResponse(
+            events=event_data,
+            total=len(events),
+            limit=limit,
+            offset=offset,
+            has_more=len(events) > offset + limit
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get recent events: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get recent events: {str(e)}")
+
+
+@router.get("/subscriptions/{subscription_id}", response_model=SubscriptionResponse, summary="Get Subscription Details")
+async def get_subscription(subscription_id: str):
+    """
+    Get details of a specific subscription.
+
+    Args:
+        subscription_id: ID of the subscription to retrieve
+
+    Returns:
+        SubscriptionResponse: Subscription details
+    """
+    try:
+        subscription = await realtime_service.get_subscription(subscription_id)
+
+        if not subscription:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+
+        return SubscriptionResponse(
+            subscription_id=subscription.id,
+            user_id=subscription.user_id,
+            event_types=subscription.event_types,
+            callback_url=subscription.callback_url,
+            filters=subscription.filters,
+            status=subscription.status.value,
+            created_at=subscription.created_at.isoformat(),
+            expires_at=subscription.expires_at.isoformat() if subscription.expires_at else None,
+            event_count=subscription.event_count,
+            last_event_at=subscription.last_event_at.isoformat() if subscription.last_event_at else None
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get subscription {subscription_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get subscription: {str(e)}")
+
+
+@router.put("/subscriptions/{subscription_id}", response_model=SubscriptionResponse, summary="Update Subscription")
+async def update_subscription(subscription_id: str, request: SubscriptionUpdateRequest):
+    """
+    Update an existing subscription.
+
+    Args:
+        subscription_id: ID of the subscription to update
+        request: Updated subscription parameters
+
+    Returns:
+        SubscriptionResponse: Updated subscription details
+    """
+    try:
+        subscription = await realtime_service.update_subscription(
+            subscription_id=subscription_id,
+            event_types=request.event_types,
+            callback_url=request.callback_url,
+            filters=request.filters,
+            status=request.status
+        )
+
+        if not subscription:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+
+        return SubscriptionResponse(
+            subscription_id=subscription.id,
+            user_id=subscription.user_id,
+            event_types=subscription.event_types,
+            callback_url=subscription.callback_url,
+            filters=subscription.filters,
+            status=subscription.status.value,
+            created_at=subscription.created_at.isoformat(),
+            expires_at=subscription.expires_at.isoformat() if subscription.expires_at else None,
+            event_count=subscription.event_count,
+            last_event_at=subscription.last_event_at.isoformat() if subscription.last_event_at else None
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update subscription {subscription_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update subscription: {str(e)}")
+
+
+@router.delete("/subscriptions/{subscription_id}", summary="Delete Subscription")
+async def delete_subscription(subscription_id: str):
+    """
+    Delete a subscription.
+
+    Args:
+        subscription_id: ID of the subscription to delete
+
+    Returns:
+        Success message
+    """
+    try:
+        success = await realtime_service.delete_subscription(subscription_id)
+
+        if not success:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+
+        return {"message": f"Subscription {subscription_id} deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete subscription {subscription_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete subscription: {str(e)}")
 
 
 @router.get("/info", response_model=RealTimeAPIInfo, summary="Get Real-time API Information")

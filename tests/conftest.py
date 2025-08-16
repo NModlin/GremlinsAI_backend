@@ -149,12 +149,16 @@ def mock_search_results():
 def mock_vector_store():
     """Mock vector store for testing."""
     mock_store = Mock()
-    mock_store.search = AsyncMock(return_value=[
+    mock_store.is_connected = True
+    mock_store.search_similar = Mock(return_value=[
         {"id": "doc1", "score": 0.95, "payload": {"content": "Test document 1"}},
         {"id": "doc2", "score": 0.87, "payload": {"content": "Test document 2"}}
     ])
-    mock_store.add_documents = AsyncMock(return_value=True)
-    mock_store.delete_document = AsyncMock(return_value=True)
+    mock_store.add_document = Mock(return_value="test-doc-id")
+    mock_store.delete_document = Mock(return_value=True)
+    mock_store.chunk_text = Mock(return_value=["Test chunk 1", "Test chunk 2"])
+    mock_store.embed_text = Mock(return_value=[0.1, 0.2, 0.3])
+    mock_store.embedding_model_name = "test-model"
     return mock_store
 
 
@@ -263,6 +267,7 @@ def mock_external_services():
     with patch('app.core.tools.duckduckgo_search') as mock_search, \
          patch('app.core.multi_agent.multi_agent_orchestrator') as mock_multi_agent, \
          patch('app.core.vector_store.vector_store') as mock_vector, \
+         patch('app.services.document_service.vector_store') as mock_doc_vector, \
          patch('app.core.service_monitor.check_multimodal_dependencies') as mock_multimodal_check, \
          patch('app.core.service_monitor.check_openai_availability') as mock_openai_check, \
          patch('app.core.service_monitor.check_qdrant_availability') as mock_qdrant_check:
@@ -278,8 +283,20 @@ def mock_external_services():
         })
 
         # Configure mock vector store
-        mock_vector.search = AsyncMock(return_value=[])
-        mock_vector.add_documents = AsyncMock(return_value=True)
+        mock_vector.is_connected = True
+        mock_vector.search_similar = Mock(return_value=[])
+        mock_vector.add_document = Mock(return_value="test-doc-id")
+        mock_vector.chunk_text = Mock(return_value=["Test chunk"])
+        mock_vector.embed_text = Mock(return_value=[0.1, 0.2, 0.3])
+        mock_vector.embedding_model_name = "test-model"
+
+        # Configure mock document service vector store
+        mock_doc_vector.is_connected = True
+        mock_doc_vector.search_similar = Mock(return_value=[])
+        mock_doc_vector.add_document = Mock(return_value="test-doc-id")
+        mock_doc_vector.chunk_text = Mock(return_value=["Test chunk"])
+        mock_doc_vector.embed_text = Mock(return_value=[0.1, 0.2, 0.3])
+        mock_doc_vector.embedding_model_name = "test-model"
 
         # Mock service monitoring functions to prevent unavailable service warnings
         from app.core.exceptions import ServiceStatus
@@ -297,6 +314,7 @@ def mock_external_services():
             "search": mock_search,
             "multi_agent": mock_multi_agent,
             "vector_store": mock_vector,
+            "doc_vector_store": mock_doc_vector,
             "multimodal_check": mock_multimodal_check,
             "openai_check": mock_openai_check,
             "qdrant_check": mock_qdrant_check

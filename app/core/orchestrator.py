@@ -212,11 +212,15 @@ class EnhancedOrchestrator:
     async def _execute_sync_task(self, task_request: TaskRequest, start_time: float) -> TaskResult:
         """Execute task synchronously."""
         try:
+            # Generate a task ID for synchronous tasks
+            import uuid
+            task_id = f"sync-{uuid.uuid4().hex[:8]}"
+
             handler = self.supported_tasks[task_request.task_type]
             result = await handler(task_request.payload)
-            
+
             return TaskResult(
-                task_id=None,
+                task_id=task_id,
                 status="completed",
                 result=result,
                 execution_time=time.time() - start_time
@@ -224,8 +228,12 @@ class EnhancedOrchestrator:
             
         except Exception as e:
             logger.error(f"Sync task execution failed: {str(e)}")
+            # Generate a task ID even for failed tasks
+            import uuid
+            task_id = f"sync-{uuid.uuid4().hex[:8]}"
+
             return TaskResult(
-                task_id=None,
+                task_id=task_id,
                 status="error",
                 result=None,
                 execution_time=time.time() - start_time,
