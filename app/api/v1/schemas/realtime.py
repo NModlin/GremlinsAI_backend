@@ -130,10 +130,14 @@ class ConnectionInfo(BaseModel):
 
 class SystemStatus(BaseModel):
     """System status schema."""
-    version: str = Field(..., description="System version")
+    status: str = Field(..., description="System operational status")
     active_connections: int = Field(..., description="Number of active WebSocket connections")
-    components: Dict[str, bool] = Field(..., description="Component availability status")
+    active_subscriptions: int = Field(..., description="Number of active subscriptions")
+    events_processed_today: int = Field(..., description="Number of events processed today")
+    average_latency_ms: float = Field(..., description="Average response latency in milliseconds")
     uptime: float = Field(..., description="System uptime in seconds")
+    last_event_time: Optional[str] = Field(None, description="Timestamp of last event")
+    system_health: Dict[str, Any] = Field(..., description="Overall system health status")
 
 
 class RealTimeAPIInfo(BaseModel):
@@ -203,3 +207,46 @@ WebSocketOutgoingMessage = Union[
     SystemUpdateMessage,
     ErrorMessage
 ]
+
+
+# REST API Schemas for Real-time Endpoints
+
+class SubscriptionRequest(BaseModel):
+    """Request schema for creating a real-time subscription."""
+    user_id: Optional[str] = Field(None, description="User ID for the subscription")
+    event_types: List[str] = Field(..., description="List of event types to subscribe to")
+    callback_url: Optional[str] = Field(None, description="Optional callback URL for notifications")
+    filters: Optional[Dict[str, Any]] = Field(None, description="Optional filters for events")
+    max_events: Optional[int] = Field(None, description="Maximum number of events before expiration")
+    expires_in_hours: Optional[int] = Field(None, description="Subscription expiration in hours")
+
+
+class SubscriptionResponse(BaseModel):
+    """Response schema for subscription operations."""
+    subscription_id: str = Field(..., description="Unique subscription ID")
+    user_id: str = Field(..., description="User ID for the subscription")
+    event_types: List[str] = Field(..., description="List of subscribed event types")
+    callback_url: Optional[str] = Field(None, description="Callback URL for notifications")
+    filters: Optional[Dict[str, Any]] = Field(None, description="Event filters")
+    status: str = Field(..., description="Subscription status")
+    created_at: str = Field(..., description="Creation timestamp")
+    expires_at: Optional[str] = Field(None, description="Expiration timestamp")
+    event_count: Optional[int] = Field(None, description="Number of events received")
+    last_event_at: Optional[str] = Field(None, description="Last event timestamp")
+
+
+class SubscriptionUpdateRequest(BaseModel):
+    """Request schema for updating a subscription."""
+    event_types: Optional[List[str]] = Field(None, description="Updated event types")
+    callback_url: Optional[str] = Field(None, description="Updated callback URL")
+    filters: Optional[Dict[str, Any]] = Field(None, description="Updated filters")
+    status: Optional[str] = Field(None, description="Updated status")
+
+
+class EventsResponse(BaseModel):
+    """Response schema for recent events."""
+    events: List[Dict[str, Any]] = Field(..., description="List of recent events")
+    total: int = Field(..., description="Total number of events")
+    limit: int = Field(..., description="Limit used for pagination")
+    offset: int = Field(..., description="Offset used for pagination")
+    has_more: bool = Field(..., description="Whether more events are available")

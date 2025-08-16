@@ -6,7 +6,7 @@ and consistent error handling across all API endpoints.
 """
 
 from typing import Dict, Any, List, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 
 from app.core.exceptions import ErrorCode, ErrorSeverity
@@ -20,8 +20,8 @@ class ValidationErrorDetailSchema(BaseModel):
     invalid_value: Optional[Any] = Field(None, description="The invalid value that was provided", example="invalid-email")
     expected_type: Optional[str] = Field(None, description="Expected data type or format", example="valid email address")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "field": "file",
                 "message": "File must be an audio file",
@@ -29,6 +29,7 @@ class ValidationErrorDetailSchema(BaseModel):
                 "expected_type": "audio/*"
             }
         }
+    )
 
 
 class ServiceStatusSchema(BaseModel):
@@ -43,8 +44,8 @@ class ServiceStatusSchema(BaseModel):
         example=["multi_agent_reasoning", "advanced_analysis"]
     )
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "service_name": "openai_api",
                 "status": "unavailable",
@@ -52,6 +53,7 @@ class ServiceStatusSchema(BaseModel):
                 "capabilities_affected": ["multi_agent_reasoning", "gpt_analysis"]
             }
         }
+    )
 
 
 class ErrorResponseSchema(BaseModel):
@@ -119,8 +121,8 @@ class ErrorResponseSchema(BaseModel):
         example=0.3
     )
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": False,
                 "error_code": "GREMLINS_6001",
@@ -146,6 +148,7 @@ class ErrorResponseSchema(BaseModel):
                 "processing_progress": 0.3
             }
         }
+    )
 
 
 # Common error response examples for different scenarios
@@ -153,8 +156,8 @@ class ErrorResponseSchema(BaseModel):
 class ValidationErrorExample(ErrorResponseSchema):
     """Example validation error response."""
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": False,
                 "error_code": "GREMLINS_1003",
@@ -186,13 +189,14 @@ class ValidationErrorExample(ErrorResponseSchema):
                 "processing_progress": None
             }
         }
+    )
 
 
 class ServiceUnavailableErrorExample(ErrorResponseSchema):
     """Example service unavailable error response."""
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": False,
                 "error_code": "GREMLINS_8001",
@@ -218,6 +222,7 @@ class ServiceUnavailableErrorExample(ErrorResponseSchema):
                 "processing_progress": None
             }
         }
+    )
 
 
 class MultiModalProcessingErrorExample(ErrorResponseSchema):

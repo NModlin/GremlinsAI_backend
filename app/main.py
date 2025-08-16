@@ -2,6 +2,7 @@
 from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -40,6 +41,30 @@ app = FastAPI(
     version="9.0.0",  # Updated for Phase 8
     lifespan=lifespan
 )
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify actual origins
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+# Add security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+
+    # Import security headers from our security module
+    from app.core.security import get_security_headers
+    security_headers = get_security_headers()
+
+    for header, value in security_headers.items():
+        response.headers[header] = value
+
+    return response
 
 # Enhanced Global Error Handling
 app.add_exception_handler(GremlinsAIException, gremlins_exception_handler)

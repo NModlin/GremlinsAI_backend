@@ -68,7 +68,7 @@ async def execute_task(request: TaskRequestSchema):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Task execution failed: {str(e)}")
 
-@router.get("/task/{task_id}", response_model=TaskStatusResponse)
+@router.get("/status/{task_id}", response_model=TaskStatusResponse)
 async def get_task_status(task_id: str):
     """
     Get the status of an asynchronous task.
@@ -95,6 +95,69 @@ async def get_task_status(task_id: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get task status: {str(e)}")
+
+@router.get("/tasks")
+async def list_tasks(
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+):
+    """
+    List tasks with optional filtering.
+
+    Args:
+        status: Filter by task status (PENDING, RUNNING, COMPLETED, FAILED)
+        limit: Maximum number of tasks to return
+        offset: Number of tasks to skip
+
+    Returns:
+        List of tasks with their status information
+    """
+    try:
+        # Mock implementation for now - in real implementation, this would query the task store
+        tasks = []
+
+        # For testing purposes, return some mock tasks
+        if status == "COMPLETED":
+            tasks = [
+                {
+                    "task_id": "task-123",
+                    "status": "COMPLETED",
+                    "task_type": "data_analysis",
+                    "created_at": "2023-01-01T00:00:00Z",
+                    "completed_at": "2023-01-01T00:05:00Z",
+                    "result": {"status": "success"}
+                }
+            ]
+        elif not status:
+            tasks = [
+                {
+                    "task_id": "task-123",
+                    "status": "COMPLETED",
+                    "task_type": "data_analysis",
+                    "created_at": "2023-01-01T00:00:00Z",
+                    "completed_at": "2023-01-01T00:05:00Z"
+                },
+                {
+                    "task_id": "task-456",
+                    "status": "PENDING",
+                    "task_type": "document_processing",
+                    "created_at": "2023-01-01T00:10:00Z"
+                }
+            ]
+
+        # Apply pagination
+        paginated_tasks = tasks[offset:offset + limit]
+
+        return {
+            "tasks": paginated_tasks,
+            "total": len(tasks),
+            "limit": limit,
+            "offset": offset
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list tasks: {str(e)}")
 
 @router.get("/capabilities", response_model=OrchestratorCapabilities)
 async def get_orchestrator_capabilities():

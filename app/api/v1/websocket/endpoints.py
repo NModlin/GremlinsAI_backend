@@ -15,6 +15,7 @@ from app.api.v1.websocket.connection_manager import connection_manager
 from app.database.database import get_db
 from app.services.chat_history import ChatHistoryService
 from app.core.orchestrator import enhanced_orchestrator
+from app.core.security import verify_api_key, check_rate_limit, sanitize_input
 
 logger = logging.getLogger(__name__)
 
@@ -25,25 +26,43 @@ router = APIRouter()
 async def websocket_endpoint(
     websocket: WebSocket,
     client_id: Optional[str] = Query(None),
-    client_type: Optional[str] = Query("web")
+    client_type: Optional[str] = Query("web"),
+    api_key: Optional[str] = Query(None)
 ):
     """
     Main WebSocket endpoint for real-time communication.
-    
+
     Query Parameters:
     - client_id: Optional client identifier
     - client_type: Type of client (web, mobile, etc.)
+    - api_key: Optional API key for authentication
     """
     # Generate connection ID
     connection_id = client_id or str(uuid.uuid4())
-    
+
+    # Security check - verify API key if provided
+    user_info = None
+    if api_key:
+        user_info = verify_api_key(api_key)
+        if not user_info:
+            await websocket.close(code=4001, reason="Invalid API key")
+            return
+
+    # Rate limiting check
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    if not check_rate_limit(client_ip):
+        await websocket.close(code=4029, reason="Rate limit exceeded")
+        return
+
     # Client information
     client_info = {
         "client_type": client_type,
         "user_agent": websocket.headers.get("user-agent", ""),
-        "origin": websocket.headers.get("origin", "")
+        "origin": websocket.headers.get("origin", ""),
+        "authenticated": user_info is not None,
+        "user_id": user_info.get("user_id") if user_info else None
     }
-    
+
     # Establish connection
     connected = await connection_manager.connect(websocket, connection_id, client_info)
     
@@ -57,8 +76,17 @@ async def websocket_endpoint(
             data = await websocket.receive_text()
             
             try:
-                message = json.loads(data)
-                await handle_websocket_message(connection_id, message)
+                # Sanitize input data before parsing
+                sanitized_data = sanitize_input(data, max_length=10000)
+                message = json.loads(sanitized_data)
+
+                # Additional sanitization for message content
+                if isinstance(message, dict):
+                    for key, value in message.items():
+                        if isinstance(value, str):
+                            message[key] = sanitize_input(value)
+
+                await handle_websocket_message(connection_id, message, user_info)
                 
             except json.JSONDecodeError:
                 await connection_manager.send_personal_message({
@@ -85,7 +113,7 @@ async def websocket_endpoint(
         connection_manager.disconnect(connection_id)
 
 
-async def handle_websocket_message(connection_id: str, message: Dict[str, Any]):
+async def handle_websocket_message(connection_id: str, message: Dict[str, Any], user_info: Optional[Dict[str, Any]] = None):
     """Handle incoming WebSocket messages."""
     message_type = message.get("type")
     

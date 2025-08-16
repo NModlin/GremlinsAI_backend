@@ -44,6 +44,103 @@ def get_multimodal_service() -> MultiModalService:
     return MultiModalService()
 
 
+# Simplified routes for backward compatibility
+@router.post(
+    "/audio",
+    response_model=MediaAnalysisResponse,
+    responses=ERROR_RESPONSES
+)
+async def process_audio_simple(
+    file: UploadFile = File(...),
+    transcribe: bool = Form(True),
+    analyze: bool = Form(False),
+    conversation_id: Optional[str] = Form(None),
+    multimodal_service: MultiModalService = Depends(get_multimodal_service)
+):
+    """
+    Process audio file with speech-to-text and analysis capabilities (simplified endpoint).
+    """
+    return await process_audio(file, transcribe, analyze, conversation_id, multimodal_service)
+
+
+@router.post(
+    "/image",
+    response_model=MediaAnalysisResponse,
+    responses=ERROR_RESPONSES
+)
+async def process_image_simple(
+    file: Optional[UploadFile] = File(None),
+    image: Optional[UploadFile] = File(None),
+    detect_objects: bool = Form(False),
+    extract_text: bool = Form(False),
+    enhance: bool = Form(False),
+    analyze: bool = Form(True),
+    conversation_id: Optional[str] = Form(None),
+    options: Optional[str] = Form(None),
+    multimodal_service: MultiModalService = Depends(get_multimodal_service)
+):
+    """
+    Process image file with computer vision and analysis capabilities (simplified endpoint).
+    """
+    # Determine which file parameter was provided
+    upload_file = file if file else image
+    if not upload_file:
+        raise HTTPException(status_code=422, detail="Either 'file' or 'image' parameter is required")
+
+    # Parse options if provided
+    if options:
+        try:
+            import json
+            opts = json.loads(options)
+            detect_objects = opts.get("detect_objects", detect_objects)
+            extract_text = opts.get("extract_text", extract_text)
+            enhance = opts.get("enhance", enhance)
+            analyze = opts.get("analyze", analyze)
+        except (json.JSONDecodeError, AttributeError):
+            pass  # Use default values if parsing fails
+
+    return await process_image(upload_file, detect_objects, extract_text, enhance, analyze, conversation_id, multimodal_service)
+
+
+@router.post(
+    "/video",
+    response_model=MediaAnalysisResponse,
+    responses=ERROR_RESPONSES
+)
+async def process_video_simple(
+    file: Optional[UploadFile] = File(None),
+    video: Optional[UploadFile] = File(None),
+    extract_frames: bool = Form(False),
+    transcribe_audio: bool = Form(True),
+    analyze: bool = Form(False),
+    frame_count: int = Form(10),
+    conversation_id: Optional[str] = Form(None),
+    options: Optional[str] = Form(None),
+    multimodal_service: MultiModalService = Depends(get_multimodal_service)
+):
+    """
+    Process video file with frame extraction, audio transcription, and analysis (simplified endpoint).
+    """
+    # Determine which file parameter was provided
+    upload_file = file if file else video
+    if not upload_file:
+        raise HTTPException(status_code=422, detail="Either 'file' or 'video' parameter is required")
+
+    # Parse options if provided
+    if options:
+        try:
+            import json
+            opts = json.loads(options)
+            extract_frames = opts.get("extract_frames", extract_frames)
+            transcribe_audio = opts.get("transcribe_audio", transcribe_audio)
+            analyze = opts.get("analyze", analyze)
+            frame_count = opts.get("frame_count", frame_count)
+        except (json.JSONDecodeError, AttributeError):
+            pass  # Use default values if parsing fails
+
+    return await process_video(upload_file, extract_frames, transcribe_audio, analyze, frame_count, conversation_id, multimodal_service)
+
+
 @router.post(
     "/process/audio",
     response_model=MediaAnalysisResponse,
@@ -136,15 +233,27 @@ async def process_audio(
                 processing_result=result
             )
         
-        return MediaAnalysisResponse(
-            success=result.get('success', False),
-            media_type='audio',
-            filename=file.filename,
-            processing_time=result.get('processing_time', 0),
-            result=result.get('result', {}),
-            error=result.get('error'),
-            timestamp=result.get('timestamp', datetime.now().isoformat())
-        )
+        # Extract nested result data for backward compatibility
+        result_data = result.get('result', {})
+
+        # Create response with expected structure
+        response_data = {
+            "success": result.get('success', False),
+            "media_type": 'audio',
+            "filename": file.filename,
+            "processing_time": result.get('processing_time', 0),
+            "result": result_data,
+            "error": result.get('error'),
+            "timestamp": result.get('timestamp', datetime.now().isoformat())
+        }
+
+        # Add transcription and analysis at top level for test compatibility
+        if 'transcription' in result_data:
+            response_data['transcription'] = result_data['transcription']
+        if 'analysis' in result_data:
+            response_data['analysis'] = result_data['analysis']
+
+        return MediaAnalysisResponse(**response_data)
         
     except (ValidationException, MultiModalProcessingException):
         raise
@@ -214,15 +323,29 @@ async def process_video(
                 processing_result=result
             )
         
-        return MediaAnalysisResponse(
-            success=result.get('success', False),
-            media_type='video',
-            filename=file.filename,
-            processing_time=result.get('processing_time', 0),
-            result=result.get('result', {}),
-            error=result.get('error'),
-            timestamp=result.get('timestamp', datetime.now().isoformat())
-        )
+        # Extract nested result data for backward compatibility
+        result_data = result.get('result', {})
+
+        # Create response with expected structure
+        response_data = {
+            "success": result.get('success', False),
+            "media_type": 'video',
+            "filename": file.filename,
+            "processing_time": result.get('processing_time', 0),
+            "result": result_data,
+            "error": result.get('error'),
+            "timestamp": result.get('timestamp', datetime.now().isoformat())
+        }
+
+        # Add video-specific fields at top level for test compatibility
+        if 'frames' in result_data:
+            response_data['frames'] = result_data['frames']
+        if 'audio_transcription' in result_data:
+            response_data['audio_transcription'] = result_data['audio_transcription']
+        if 'analysis' in result_data:
+            response_data['analysis'] = result_data['analysis']
+
+        return MediaAnalysisResponse(**response_data)
         
     except HTTPException:
         raise
@@ -254,7 +377,7 @@ async def process_image(
     try:
         # Validate file type
         if not file.content_type or not file.content_type.startswith('image/'):
-            raise HTTPException(status_code=400, detail="File must be an image file")
+            raise HTTPException(status_code=400, detail="Unsupported image format")
         
         # Read file data
         image_data = await file.read()
@@ -286,15 +409,29 @@ async def process_image(
                 processing_result=result
             )
         
-        return MediaAnalysisResponse(
-            success=result.get('success', False),
-            media_type='image',
-            filename=file.filename,
-            processing_time=result.get('processing_time', 0),
-            result=result.get('result', {}),
-            error=result.get('error'),
-            timestamp=result.get('timestamp', datetime.now().isoformat())
-        )
+        # Extract nested result data for backward compatibility
+        result_data = result.get('result', {})
+
+        # Create response with expected structure
+        response_data = {
+            "success": result.get('success', False),
+            "media_type": 'image',
+            "filename": file.filename,
+            "processing_time": result.get('processing_time', 0),
+            "result": result_data,
+            "error": result.get('error'),
+            "timestamp": result.get('timestamp', datetime.now().isoformat())
+        }
+
+        # Add analysis and other fields at top level for test compatibility
+        if 'analysis' in result_data:
+            response_data['analysis'] = result_data['analysis']
+        if 'objects' in result_data:
+            response_data['objects'] = result_data['objects']
+        if 'text' in result_data:
+            response_data['text'] = result_data['text']
+
+        return MediaAnalysisResponse(**response_data)
         
     except HTTPException:
         raise

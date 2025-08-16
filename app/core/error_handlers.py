@@ -79,6 +79,10 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         category="http_error",
         suggested_action=_get_suggested_action_for_status(exc.status_code)
     )
+
+    # Add detail field for backward compatibility with tests
+    response_dict = error_response.model_dump()
+    response_dict["detail"] = str(exc.detail)
     
     logger.warning(
         f"HTTP Exception: {exc.status_code} - {exc.detail}",
@@ -91,7 +95,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     
     return JSONResponse(
         status_code=exc.status_code,
-        content=error_response.model_dump(),
+        content=response_dict,
         headers={"X-Request-ID": error_response.request_id}
     )
 
@@ -135,9 +139,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         }
     )
     
+    # Add detail field for backward compatibility with tests
+    response_dict = validation_exc.error_response.model_dump()
+    response_dict["detail"] = error_message
+
     return JSONResponse(
         status_code=validation_exc.status_code,
-        content=validation_exc.error_response.model_dump(),
+        content=response_dict,
         headers={"X-Request-ID": validation_exc.error_response.request_id}
     )
 
