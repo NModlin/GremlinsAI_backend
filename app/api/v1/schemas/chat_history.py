@@ -107,6 +107,8 @@ class ConversationContextResponse(BaseModel):
 # Agent-specific schemas for integration
 class AgentConversationRequest(BaseModel):
     """Schema for agent requests with conversation context."""
+    model_config = ConfigDict(extra='forbid')
+
     input: str = Field(..., description="User input/query")
     conversation_id: Optional[str] = Field(None, description="ID of existing conversation")
     save_conversation: bool = Field(True, description="Whether to save this interaction")

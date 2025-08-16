@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 from enum import Enum
 
-from app.core.agent import agent
+from app.core.agent import agent_graph_app
 from app.core.multi_agent import multi_agent_orchestrator
 from app.core.exceptions import GremlinsAIException, ErrorCode
 
@@ -121,7 +121,7 @@ class AgentSystem:
         try:
             # Use the existing agent system
             result = await asyncio.wait_for(
-                asyncio.to_thread(agent.invoke, {"input": task.query}),
+                asyncio.to_thread(agent_graph_app.invoke, {"input": task.query}),
                 timeout=task.timeout
             )
             

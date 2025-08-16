@@ -1,4 +1,4 @@
-# GremlinsAI Frontend Integration Guide
+# GremlinsAI Frontend Integration Guide (v8.0.0)
 
 ## Table of Contents
 1. [Getting Started](#getting-started)
@@ -12,10 +12,26 @@
 
 ## Getting Started
 
-### Base URL Configuration
+### Base URL Configuration (v8.0.0)
 ```javascript
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 const WS_BASE_URL = 'ws://localhost:8000/api/v1/ws';
+const DOCS_BASE_URL = 'http://localhost:8000/docs';
+const DEVELOPER_PORTAL_URL = 'http://localhost:8000/developer-portal';
+
+// Version information
+const API_VERSION = '8.0.0';
+const SUPPORTED_FEATURES = [
+  'REST API',
+  'GraphQL API',
+  'WebSocket Real-time Communication',
+  'Multi-Agent Workflows',
+  'Document Management & RAG',
+  'Asynchronous Task Orchestration',
+  'Multi-Modal Processing (Audio, Video, Image)',
+  'Developer Tools & SDKs',
+  'Interactive Documentation'
+];
 ```
 
 ### Environment Setup
@@ -141,7 +157,9 @@ class GremlinsAPIClient {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
           'X-Request-ID': this.generateRequestId(),
-          'X-Client-Version': '1.0.0',
+          'X-Client-Version': '8.0.0',
+          'X-API-Version': '8.0.0',
+          'User-Agent': 'GremlinsAI-Frontend-Client/8.0.0',
         },
         body: data ? JSON.stringify(data) : undefined,
         signal: controller.signal,
@@ -172,8 +190,15 @@ class GremlinsAPIClient {
 
   private handleError(error: any): string {
     if (error.response?.data) {
+      const errorData = error.response.data;
       const status = error.response.status;
 
+      // Check for new comprehensive error format first
+      if (errorData.error_message || errorData.detail) {
+        return errorData.error_message || errorData.detail || 'An unexpected error occurred.';
+      }
+
+      // Fallback to status-based error handling
       switch (status) {
         case 401:
           return 'Authentication failed. Please check your API key.';
@@ -186,7 +211,7 @@ class GremlinsAPIClient {
         case 500:
           return 'Server error. Please try again later.';
         default:
-          return error.response.data.error_message || 'An unexpected error occurred.';
+          return 'An unexpected error occurred.';
       }
     }
 
@@ -435,24 +460,38 @@ async function listTasks(filters = {}) {
 }
 ```
 
-### Real-time API
+### Enhanced Real-time API (Phase 6 - v8.0.0)
 
-#### Subscribe to Events
+#### Subscribe to Real-time Events
 ```javascript
-async function subscribeToEvents(eventTypes, callback) {
+async function subscribeToEvents(eventTypes, options = {}) {
   try {
     const response = await apiClient.post('/realtime/subscribe', {
       event_types: eventTypes,
-      callback_url: callback
+      callback_url: options.callbackUrl,
+      filter_criteria: options.filterCriteria || {},
+      subscription_id: options.subscriptionId || generateRequestId(),
+      delivery_mode: options.deliveryMode || 'webhook', // 'webhook' or 'websocket'
+      retry_policy: options.retryPolicy || {
+        max_retries: 3,
+        retry_delay: 1000,
+        exponential_backoff: true
+      }
     });
     return response.data;
   } catch (error) {
     throw new Error(`Subscription failed: ${error.message}`);
   }
 }
+
+// Example: Subscribe to conversation events
+const subscription = await subscribeToEvents(['conversation_updated', 'message_created'], {
+  filterCriteria: { user_id: 'current-user' },
+  deliveryMode: 'websocket'
+});
 ```
 
-#### Get Real-time Status
+#### Get Real-time System Status
 ```javascript
 async function getRealtimeStatus() {
   try {
@@ -462,11 +501,102 @@ async function getRealtimeStatus() {
     throw new Error(`Failed to get real-time status: ${error.message}`);
   }
 }
+
+// Enhanced system status with metrics
+async function getSystemMetrics() {
+  try {
+    const response = await apiClient.get('/realtime/system/status');
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to get system metrics: ${error.message}`);
+  }
+}
+
+// Example usage
+const status = await getRealtimeStatus();
+console.log('WebSocket connections:', status.active_connections);
+console.log('Event queue status:', status.event_queue);
+
+const metrics = await getSystemMetrics();
+console.log('System health:', metrics.health_score);
+console.log('Response times:', metrics.avg_response_time);
 ```
 
-### Multi-Modal Processing
+#### Real-time Information and Capabilities
+```javascript
+async function getRealtimeInfo() {
+  try {
+    const response = await apiClient.get('/realtime/info');
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to get real-time info: ${error.message}`);
+  }
+}
 
-#### Process Audio
+// Get available event types
+async function getAvailableEventTypes() {
+  try {
+    const response = await apiClient.get('/realtime/events/types');
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to get event types: ${error.message}`);
+  }
+}
+
+// Example usage
+const realtimeInfo = await getRealtimeInfo();
+console.log('Supported protocols:', realtimeInfo.supported_protocols);
+console.log('Max connections:', realtimeInfo.max_connections);
+
+const eventTypes = await getAvailableEventTypes();
+console.log('Available events:', eventTypes.event_types);
+```
+
+#### Manage Subscriptions
+```javascript
+async function listSubscriptions() {
+  try {
+    const response = await apiClient.get('/realtime/subscriptions');
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to list subscriptions: ${error.message}`);
+  }
+}
+
+async function updateSubscription(subscriptionId, updates) {
+  try {
+    const response = await apiClient.patch(`/realtime/subscriptions/${subscriptionId}`, updates);
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to update subscription: ${error.message}`);
+  }
+}
+
+async function cancelSubscription(subscriptionId) {
+  try {
+    const response = await apiClient.delete(`/realtime/subscriptions/${subscriptionId}`);
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to cancel subscription: ${error.message}`);
+  }
+}
+
+// Example: Manage subscriptions
+const subscriptions = await listSubscriptions();
+console.log('Active subscriptions:', subscriptions.subscriptions);
+
+// Update subscription to add more event types
+await updateSubscription('sub-123', {
+  event_types: ['conversation_updated', 'message_created', 'agent_response']
+});
+
+// Cancel subscription when no longer needed
+await cancelSubscription('sub-123');
+```
+
+### Multi-Modal Processing (Phase 7 - v8.0.0)
+
+#### Process Audio with Advanced Features
 ```javascript
 async function processAudio(audioFile, options = {}) {
   try {
@@ -475,19 +605,26 @@ async function processAudio(audioFile, options = {}) {
     formData.append('options', JSON.stringify({
       transcribe: options.transcribe !== false,
       language: options.language || 'auto',
-      format: options.format || 'wav'
+      format: options.format || 'wav',
+      include_timestamps: options.includeTimestamps || false,
+      speaker_detection: options.speakerDetection || false,
+      sentiment_analysis: options.sentimentAnalysis || false,
+      keyword_extraction: options.keywordExtraction || false
     }));
 
     const response = await fetch(`${API_BASE_URL}/multimodal/audio`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${API_KEY}`,
+        'X-Request-ID': generateRequestId(),
+        'X-API-Version': '8.0.0',
       },
       body: formData,
     });
 
     if (!response.ok) {
-      throw new Error(`Audio processing failed: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error_message || errorData.detail || `Audio processing failed: ${response.statusText}`);
     }
 
     return response.json();
@@ -495,9 +632,21 @@ async function processAudio(audioFile, options = {}) {
     throw new Error(`Audio processing failed: ${error.message}`);
   }
 }
+
+// Example usage with advanced features
+const audioResult = await processAudio(audioFile, {
+  transcribe: true,
+  language: 'en',
+  includeTimestamps: true,
+  speakerDetection: true,
+  sentimentAnalysis: true
+});
+console.log('Transcription:', audioResult.transcription);
+console.log('Speakers:', audioResult.speakers);
+console.log('Sentiment:', audioResult.sentiment);
 ```
 
-#### Process Image
+#### Process Image with Computer Vision
 ```javascript
 async function processImage(imageFile, options = {}) {
   try {
@@ -506,19 +655,26 @@ async function processImage(imageFile, options = {}) {
     formData.append('options', JSON.stringify({
       analyze: options.analyze !== false,
       extract_text: options.extractText || false,
-      detect_objects: options.detectObjects || false
+      detect_objects: options.detectObjects || false,
+      face_detection: options.faceDetection || false,
+      scene_analysis: options.sceneAnalysis || false,
+      color_analysis: options.colorAnalysis || false,
+      quality_assessment: options.qualityAssessment || false
     }));
 
     const response = await fetch(`${API_BASE_URL}/multimodal/image`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${API_KEY}`,
+        'X-Request-ID': generateRequestId(),
+        'X-API-Version': '8.0.0',
       },
       body: formData,
     });
 
     if (!response.ok) {
-      throw new Error(`Image processing failed: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error_message || errorData.detail || `Image processing failed: ${response.statusText}`);
     }
 
     return response.json();
@@ -526,6 +682,114 @@ async function processImage(imageFile, options = {}) {
     throw new Error(`Image processing failed: ${error.message}`);
   }
 }
+
+// Example usage with computer vision
+const imageResult = await processImage(imageFile, {
+  analyze: true,
+  extractText: true,
+  detectObjects: true,
+  faceDetection: true,
+  sceneAnalysis: true
+});
+console.log('Objects detected:', imageResult.objects);
+console.log('Text extracted:', imageResult.text);
+console.log('Scene description:', imageResult.scene);
+```
+
+#### Process Video with Analysis
+```javascript
+async function processVideo(videoFile, options = {}) {
+  try {
+    const formData = new FormData();
+    formData.append('video', videoFile);
+    formData.append('options', JSON.stringify({
+      extract_frames: options.extractFrames || false,
+      frame_interval: options.frameInterval || 1,
+      analyze_content: options.analyzeContent || false,
+      detect_scenes: options.detectScenes || false,
+      extract_audio: options.extractAudio || false,
+      generate_summary: options.generateSummary || false
+    }));
+
+    const response = await fetch(`${API_BASE_URL}/multimodal/video`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'X-Request-ID': generateRequestId(),
+        'X-API-Version': '8.0.0',
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error_message || errorData.detail || `Video processing failed: ${response.statusText}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    throw new Error(`Video processing failed: ${error.message}`);
+  }
+}
+
+// Example usage
+const videoResult = await processVideo(videoFile, {
+  extractFrames: true,
+  frameInterval: 5,
+  analyzeContent: true,
+  detectScenes: true,
+  generateSummary: true
+});
+console.log('Scenes detected:', videoResult.scenes);
+console.log('Content summary:', videoResult.summary);
+```
+
+#### Multi-Modal Content Fusion
+```javascript
+async function processMultiModalContent(files, options = {}) {
+  try {
+    const formData = new FormData();
+
+    files.forEach((file, index) => {
+      formData.append(`file_${index}`, file);
+    });
+
+    formData.append('options', JSON.stringify({
+      fusion_type: options.fusionType || 'comprehensive',
+      cross_modal_analysis: options.crossModalAnalysis || true,
+      generate_insights: options.generateInsights || true,
+      correlation_analysis: options.correlationAnalysis || false
+    }));
+
+    const response = await fetch(`${API_BASE_URL}/multimodal/fusion`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'X-Request-ID': generateRequestId(),
+        'X-API-Version': '8.0.0',
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error_message || errorData.detail || `Multi-modal fusion failed: ${response.statusText}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    throw new Error(`Multi-modal fusion failed: ${error.message}`);
+  }
+}
+
+// Example: Process image + audio together
+const fusionResult = await processMultiModalContent([imageFile, audioFile], {
+  fusionType: 'comprehensive',
+  crossModalAnalysis: true,
+  generateInsights: true
+});
+console.log('Fusion insights:', fusionResult.insights);
+console.log('Cross-modal correlations:', fusionResult.correlations);
 ```
 
 ### GraphQL API
@@ -588,53 +852,183 @@ const conversationData = await executeGraphQLQuery(GET_CONVERSATION, {
 });
 ```
 
-### Developer Portal Integration
+### Developer Portal & Documentation (Phase 8 - v8.0.0)
 
-#### Get API Documentation
+#### Interactive Documentation Access
 ```javascript
-async function getAPIDocumentation() {
+// Access interactive documentation portal
+async function getInteractiveDocumentation() {
   try {
-    const response = await apiClient.get('/developer-portal/docs');
-    return response.data;
+    const response = await fetch(`${API_BASE_URL.replace('/api/v1', '')}/docs`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'X-API-Version': '8.0.0',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to access documentation: ${response.statusText}`);
+    }
+
+    return response.text(); // Returns HTML content
   } catch (error) {
-    throw new Error(`Failed to get API documentation: ${error.message}`);
+    throw new Error(`Failed to get interactive documentation: ${error.message}`);
+  }
+}
+
+// Get API reference documentation
+async function getAPIReference() {
+  try {
+    const response = await fetch(`${API_BASE_URL.replace('/api/v1', '')}/docs/api-reference`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'X-API-Version': '8.0.0',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to access API reference: ${response.statusText}`);
+    }
+
+    return response.text(); // Returns HTML content
+  } catch (error) {
+    throw new Error(`Failed to get API reference: ${error.message}`);
+  }
+}
+
+// Get OpenAPI specification
+async function getOpenAPISpec() {
+  try {
+    const response = await fetch(`${API_BASE_URL.replace('/api/v1', '')}/docs/api-spec`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'X-API-Version': '8.0.0',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to get OpenAPI spec: ${response.statusText}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    throw new Error(`Failed to get OpenAPI specification: ${error.message}`);
   }
 }
 ```
 
-#### Get SDK Information
+#### Developer Portal Dashboard
 ```javascript
-async function getSDKInfo() {
+// Access developer portal dashboard
+async function getDeveloperPortalDashboard() {
   try {
-    const response = await apiClient.get('/developer-portal/sdks');
-    return response.data;
+    const response = await fetch(`${API_BASE_URL.replace('/api/v1', '')}/developer-portal`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'X-API-Version': '8.0.0',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to access developer portal: ${response.statusText}`);
+    }
+
+    return response.text(); // Returns HTML content
   } catch (error) {
-    throw new Error(`Failed to get SDK information: ${error.message}`);
+    throw new Error(`Failed to get developer portal: ${error.message}`);
   }
 }
+
+// Get system metrics for developers
+async function getDeveloperMetrics() {
+  try {
+    const response = await fetch(`${API_BASE_URL.replace('/api/v1', '')}/developer-portal/metrics`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'X-API-Version': '8.0.0',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to get metrics: ${response.statusText}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    throw new Error(`Failed to get developer metrics: ${error.message}`);
+  }
+}
+
+// Test API endpoints interactively
+async function testAPIEndpoint(endpoint, method = 'GET', data = null) {
+  try {
+    const response = await fetch(`${API_BASE_URL.replace('/api/v1', '')}/developer-portal/test-endpoint`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+        'X-API-Version': '8.0.0',
+      },
+      body: JSON.stringify({
+        endpoint,
+        method,
+        data
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to test endpoint: ${response.statusText}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    throw new Error(`Failed to test API endpoint: ${error.message}`);
+  }
+}
+
+// Example usage
+const metrics = await getDeveloperMetrics();
+console.log('System health:', metrics.system_health);
+console.log('API response times:', metrics.response_times);
 ```
 
-## WebSocket Connections
+## WebSocket Connections (Enhanced v8.0.0)
 
-### Real-time Chat Connection
+### Advanced Real-time Connection
 ```javascript
 class GremlinsWebSocket {
-  constructor(url, apiKey) {
+  constructor(url, apiKey, options = {}) {
     this.url = url;
     this.apiKey = apiKey;
     this.ws = null;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
-    this.reconnectDelay = 1000;
+    this.maxReconnectAttempts = options.maxReconnectAttempts || 5;
+    this.reconnectDelay = options.reconnectDelay || 1000;
+    this.heartbeatInterval = options.heartbeatInterval || 30000;
+    this.heartbeatTimer = null;
+    this.subscriptions = new Set();
+    this.messageQueue = [];
+    this.connectionStatus = 'disconnected';
   }
 
   connect() {
     try {
-      this.ws = new WebSocket(`${this.url}/chat?token=${this.apiKey}`);
-      
+      this.connectionStatus = 'connecting';
+      // Updated WebSocket endpoint for v8.0.0
+      this.ws = new WebSocket(`${this.url}/ws?token=${this.apiKey}&version=8.0.0`);
+
       this.ws.onopen = () => {
-        console.log('WebSocket connected');
+        console.log('WebSocket connected to GremlinsAI v8.0.0');
+        this.connectionStatus = 'connected';
         this.reconnectAttempts = 0;
+        this.startHeartbeat();
+        this.processMessageQueue();
+        this.resubscribeToEvents();
       };
 
       this.ws.onmessage = (event) => {
@@ -642,30 +1036,129 @@ class GremlinsWebSocket {
         this.handleMessage(data);
       };
 
-      this.ws.onclose = () => {
-        console.log('WebSocket disconnected');
+      this.ws.onclose = (event) => {
+        console.log('WebSocket disconnected:', event.code, event.reason);
+        this.connectionStatus = 'disconnected';
+        this.stopHeartbeat();
         this.handleReconnect();
       };
 
       this.ws.onerror = (error) => {
         console.error('WebSocket error:', error);
+        this.connectionStatus = 'error';
       };
     } catch (error) {
       console.error('Failed to connect WebSocket:', error);
+      this.connectionStatus = 'error';
     }
   }
 
   sendMessage(message) {
+    const messageWithTimestamp = {
+      ...message,
+      timestamp: new Date().toISOString(),
+      request_id: this.generateRequestId()
+    };
+
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
+      this.ws.send(JSON.stringify(messageWithTimestamp));
     } else {
-      throw new Error('WebSocket is not connected');
+      // Queue message for when connection is restored
+      this.messageQueue.push(messageWithTimestamp);
+      if (this.connectionStatus === 'disconnected') {
+        this.connect();
+      }
     }
   }
 
+  // Enhanced message handling with event types
   handleMessage(data) {
-    // Override this method to handle incoming messages
-    console.log('Received message:', data);
+    switch (data.type) {
+      case 'agent_response':
+        this.onAgentResponse(data);
+        break;
+      case 'conversation_updated':
+        this.onConversationUpdated(data);
+        break;
+      case 'message_created':
+        this.onMessageCreated(data);
+        break;
+      case 'task_status_update':
+        this.onTaskStatusUpdate(data);
+        break;
+      case 'system_notification':
+        this.onSystemNotification(data);
+        break;
+      case 'error':
+        this.onError(data);
+        break;
+      case 'pong':
+        // Heartbeat response
+        break;
+      default:
+        console.log('Received unknown message type:', data);
+    }
+  }
+
+  // Subscription management
+  subscribeToEvent(eventType, conversationId = null) {
+    const subscription = {
+      type: 'subscribe',
+      subscription_type: eventType,
+      conversation_id: conversationId,
+      timestamp: new Date().toISOString()
+    };
+
+    this.subscriptions.add(JSON.stringify(subscription));
+    this.sendMessage(subscription);
+  }
+
+  unsubscribeFromEvent(eventType, conversationId = null) {
+    const subscription = {
+      type: 'unsubscribe',
+      subscription_type: eventType,
+      conversation_id: conversationId,
+      timestamp: new Date().toISOString()
+    };
+
+    this.subscriptions.delete(JSON.stringify({
+      type: 'subscribe',
+      subscription_type: eventType,
+      conversation_id: conversationId
+    }));
+    this.sendMessage(subscription);
+  }
+
+  // Heartbeat mechanism
+  startHeartbeat() {
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.sendMessage({ type: 'ping' });
+      }
+    }, this.heartbeatInterval);
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  // Process queued messages
+  processMessageQueue() {
+    while (this.messageQueue.length > 0) {
+      const message = this.messageQueue.shift();
+      this.sendMessage(message);
+    }
+  }
+
+  // Resubscribe to events after reconnection
+  resubscribeToEvents() {
+    this.subscriptions.forEach(subscriptionStr => {
+      const subscription = JSON.parse(subscriptionStr);
+      this.sendMessage(subscription);
+    });
   }
 
   handleReconnect() {
@@ -674,59 +1167,220 @@ class GremlinsWebSocket {
         this.reconnectAttempts++;
         console.log(`Reconnecting... Attempt ${this.reconnectAttempts}`);
         this.connect();
-      }, this.reconnectDelay * this.reconnectAttempts);
+      }, this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1));
+    } else {
+      console.error('Max reconnection attempts reached');
+      this.connectionStatus = 'error';
     }
   }
 
+  generateRequestId() {
+    return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  // Event handlers (override these in your implementation)
+  onAgentResponse(data) { console.log('Agent response:', data); }
+  onConversationUpdated(data) { console.log('Conversation updated:', data); }
+  onMessageCreated(data) { console.log('Message created:', data); }
+  onTaskStatusUpdate(data) { console.log('Task status update:', data); }
+  onSystemNotification(data) { console.log('System notification:', data); }
+  onError(data) { console.error('WebSocket error:', data); }
+
   disconnect() {
+    this.stopHeartbeat();
     if (this.ws) {
       this.ws.close();
     }
+    this.connectionStatus = 'disconnected';
   }
 }
 ```
 
-### Usage Example
+### Enhanced Usage Example (v8.0.0)
 ```javascript
 const wsClient = new GremlinsWebSocket(
   process.env.REACT_APP_WS_BASE_URL,
-  process.env.REACT_APP_API_KEY
+  process.env.REACT_APP_API_KEY,
+  {
+    maxReconnectAttempts: 10,
+    reconnectDelay: 1000,
+    heartbeatInterval: 30000
+  }
 );
 
-wsClient.handleMessage = (data) => {
-  if (data.type === 'agent_response') {
-    updateChatUI(data.message);
-  } else if (data.type === 'error') {
-    showError(data.error);
+// Override event handlers for your application
+wsClient.onAgentResponse = (data) => {
+  updateChatUI(data.message, data.conversation_id);
+  if (data.execution_time) {
+    updatePerformanceMetrics(data.execution_time);
+  }
+};
+
+wsClient.onConversationUpdated = (data) => {
+  refreshConversationList();
+  updateConversationTitle(data.conversation_id, data.title);
+};
+
+wsClient.onMessageCreated = (data) => {
+  addMessageToUI(data.message);
+  scrollToBottom();
+};
+
+wsClient.onTaskStatusUpdate = (data) => {
+  updateTaskProgress(data.task_id, data.status, data.progress);
+};
+
+wsClient.onSystemNotification = (data) => {
+  showSystemNotification(data.message, data.severity);
+};
+
+wsClient.onError = (data) => {
+  showError(data.error_message || data.detail);
+  if (data.error_code === 'GREMLINS_7001') {
+    // WebSocket connection error - will auto-reconnect
+    showReconnectingIndicator();
   }
 };
 
 wsClient.connect();
 
-// Send a message
-wsClient.sendMessage({
-  type: 'chat',
-  input: 'Hello, how can you help me?',
-  conversation_id: currentConversationId
-});
+// Subscribe to specific events
+wsClient.subscribeToEvent('conversation', currentConversationId);
+wsClient.subscribeToEvent('task_updates');
+wsClient.subscribeToEvent('system_notifications');
+
+// Send a message with input sanitization
+function sendSanitizedMessage(input, conversationId) {
+  const sanitizedInput = sanitizeInput(input);
+  wsClient.sendMessage({
+    type: 'chat',
+    input: sanitizedInput,
+    conversation_id: conversationId,
+    metadata: {
+      client_version: '8.0.0',
+      user_agent: navigator.userAgent
+    }
+  });
+}
+
+// Input sanitization function
+function sanitizeInput(input) {
+  if (typeof input !== 'string') {
+    throw new Error('Input must be a string');
+  }
+
+  // Remove potentially dangerous characters
+  return input
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '') // Remove script tags
+    .replace(/javascript:/gi, '') // Remove javascript: protocol
+    .replace(/on\w+\s*=/gi, '') // Remove event handlers
+    .trim()
+    .substring(0, 10000); // Limit length
+}
+
+// Example usage
+sendSanitizedMessage('Hello, how can you help me?', currentConversationId);
+```
+
+### Security Best Practices
+```javascript
+// Input validation and sanitization
+class InputValidator {
+  static sanitizeText(text) {
+    if (!text || typeof text !== 'string') {
+      return '';
+    }
+
+    return text
+      .replace(/[<>]/g, '') // Remove angle brackets
+      .replace(/javascript:/gi, '') // Remove javascript protocol
+      .replace(/on\w+=/gi, '') // Remove event handlers
+      .trim()
+      .substring(0, 5000); // Reasonable length limit
+  }
+
+  static validateFileUpload(file) {
+    const allowedTypes = [
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+      'audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/ogg',
+      'video/mp4', 'video/webm', 'video/ogg',
+      'application/pdf', 'text/plain'
+    ];
+
+    const maxSize = 50 * 1024 * 1024; // 50MB
+
+    if (!allowedTypes.includes(file.type)) {
+      throw new Error('File type not allowed');
+    }
+
+    if (file.size > maxSize) {
+      throw new Error('File size too large');
+    }
+
+    return true;
+  }
+
+  static sanitizeFilename(filename) {
+    return filename
+      .replace(/[^a-zA-Z0-9.-]/g, '_') // Replace special chars with underscore
+      .replace(/\.{2,}/g, '.') // Remove multiple dots
+      .substring(0, 255); // Limit filename length
+  }
+}
+
+// Usage in your application
+function handleUserInput(input) {
+  try {
+    const sanitizedInput = InputValidator.sanitizeText(input);
+    if (!sanitizedInput) {
+      throw new Error('Invalid input provided');
+    }
+
+    sendSanitizedMessage(sanitizedInput, currentConversationId);
+  } catch (error) {
+    showError(`Input validation failed: ${error.message}`);
+  }
+}
+
+function handleFileUpload(file) {
+  try {
+    InputValidator.validateFileUpload(file);
+    const sanitizedFilename = InputValidator.sanitizeFilename(file.name);
+
+    // Proceed with file upload
+    uploadFile(file, sanitizedFilename);
+  } catch (error) {
+    showError(`File validation failed: ${error.message}`);
+  }
+}
 ```
 
 ## Error Handling
 
-### Standard Error Response Format
+### Comprehensive Error Response Format (v8.0.0)
 ```typescript
-interface GremlinsError {
+interface ErrorResponse {
+  success: boolean;
   error_code: string;
   error_message: string;
-  error_details?: string;
-  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  error_details: string;
+  detail: string; // Added for backward compatibility
+  request_id: string;
+  timestamp: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
   category: string;
   suggested_action: string;
   documentation_url: string;
-  request_id: string;
-  timestamp: string;
-  affected_services: string[];
+  affected_services: ServiceStatus[];
+  fallback_available: boolean;
   validation_errors?: ValidationError[];
+}
+
+interface ServiceStatus {
+  service_name: string;
+  status: 'available' | 'degraded' | 'unavailable';
+  fallback_available: boolean;
+  capabilities_affected: string[];
 }
 
 interface ValidationError {
@@ -737,13 +1391,17 @@ interface ValidationError {
 }
 ```
 
-### Error Handling Utility
+### Enhanced Error Handling Utility (v8.0.0)
 ```javascript
 class ErrorHandler {
   static handle(error) {
     if (error.response?.data) {
       const errorData = error.response.data;
-      
+
+      // Use the new comprehensive error format
+      const message = errorData.error_message || errorData.detail || 'An unexpected error occurred.';
+
+      // Enhanced error code handling
       switch (errorData.error_code) {
         case 'GREMLINS_1001':
           return 'Authentication failed. Please check your API key.';
@@ -755,18 +1413,47 @@ class ErrorHandler {
           return 'Database error. Please contact support.';
         case 'GREMLINS_4001':
           return 'External service unavailable. Please try again later.';
+        case 'GREMLINS_5001':
+          return 'Rate limit exceeded. Please wait before retrying.';
+        case 'GREMLINS_6001':
+          return 'Multi-modal processing failed. Check file format and try again.';
+        case 'GREMLINS_7001':
+          return 'WebSocket connection error. Attempting to reconnect...';
+        case 'GREMLINS_8001':
+          return 'Service temporarily unavailable. Fallback mode activated.';
         default:
-          return errorData.error_message || 'An unexpected error occurred.';
+          return message;
       }
     }
-    
+
     return error.message || 'Network error occurred.';
   }
 
   static isRetryable(error) {
-    const retryableCodes = ['GREMLINS_4001', 'GREMLINS_5001'];
-    return error.response?.data?.error_code && 
+    const retryableCodes = [
+      'GREMLINS_4001', // External service unavailable
+      'GREMLINS_5001', // Rate limit exceeded
+      'GREMLINS_7001', // WebSocket connection error
+      'GREMLINS_8001'  // Service temporarily unavailable
+    ];
+    return error.response?.data?.error_code &&
            retryableCodes.includes(error.response.data.error_code);
+  }
+
+  static getSeverity(error) {
+    return error.response?.data?.severity || 'medium';
+  }
+
+  static getAffectedServices(error) {
+    return error.response?.data?.affected_services || [];
+  }
+
+  static hasFallback(error) {
+    return error.response?.data?.fallback_available || false;
+  }
+
+  static getSuggestedAction(error) {
+    return error.response?.data?.suggested_action || 'Please try again or contact support.';
   }
 }
 ```
@@ -907,20 +1594,37 @@ interface MultiAgentWorkflowRequest {
   save_conversation?: boolean;
 }
 
-// WebSocket Types
+// Enhanced WebSocket Types (v8.0.0)
 interface WebSocketMessage {
-  type: 'chat' | 'agent_response' | 'error' | 'status' | 'ping' | 'pong';
-  data: any;
+  type: 'chat' | 'agent_response' | 'conversation_updated' | 'message_created' |
+        'task_status_update' | 'system_notification' | 'error' | 'status' |
+        'ping' | 'pong' | 'subscribe' | 'unsubscribe';
+  data?: any;
   timestamp: string;
   request_id?: string;
+  conversation_id?: string;
+  subscription_type?: string;
+  error_code?: string;
+  error_message?: string;
+  detail?: string; // For backward compatibility
 }
 
 interface WebSocketConfig {
   url: string;
   apiKey: string;
-  reconnectAttempts?: number;
+  maxReconnectAttempts?: number;
   reconnectDelay?: number;
   heartbeatInterval?: number;
+  autoReconnect?: boolean;
+  queueMessages?: boolean;
+}
+
+interface WebSocketSubscription {
+  type: 'subscribe' | 'unsubscribe';
+  subscription_type: 'conversation' | 'task_updates' | 'system_notifications' | 'agent_responses';
+  conversation_id?: string;
+  filter_criteria?: Record<string, any>;
+  timestamp: string;
 }
 
 // Hook Return Types
@@ -1293,6 +1997,222 @@ const useVirtualScrolling = (items: any[], itemHeight: number, containerHeight: 
     onScroll: (e: React.UIEvent) => setScrollTop(e.currentTarget.scrollTop),
   };
 };
+```
+
+// Multi-Modal Types (Phase 7 - v8.0.0)
+interface AudioProcessingOptions {
+  transcribe?: boolean;
+  language?: string;
+  format?: string;
+  include_timestamps?: boolean;
+  speaker_detection?: boolean;
+  sentiment_analysis?: boolean;
+  keyword_extraction?: boolean;
+  noise_reduction?: boolean;
+}
+
+interface AudioProcessingResult {
+  transcription?: string;
+  language_detected?: string;
+  speakers?: Array<{
+    speaker_id: string;
+    segments: Array<{
+      start_time: number;
+      end_time: number;
+      text: string;
+    }>;
+  }>;
+  sentiment?: {
+    overall_sentiment: 'positive' | 'negative' | 'neutral';
+    confidence: number;
+    emotions?: string[];
+  };
+  keywords?: Array<{
+    keyword: string;
+    relevance: number;
+    frequency: number;
+  }>;
+  audio_quality?: {
+    signal_to_noise_ratio: number;
+    clarity_score: number;
+  };
+  processing_time: number;
+}
+
+interface ImageProcessingOptions {
+  analyze?: boolean;
+  extract_text?: boolean;
+  detect_objects?: boolean;
+  face_detection?: boolean;
+  scene_analysis?: boolean;
+  color_analysis?: boolean;
+  quality_assessment?: boolean;
+}
+
+interface ImageProcessingResult {
+  analysis?: {
+    description: string;
+    confidence: number;
+    categories: string[];
+  };
+  text_extracted?: string;
+  objects?: Array<{
+    label: string;
+    confidence: number;
+    bounding_box: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
+  }>;
+  faces?: Array<{
+    confidence: number;
+    age_estimate?: number;
+    gender_estimate?: string;
+    emotions?: Record<string, number>;
+    bounding_box: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
+  }>;
+  scene?: {
+    primary_scene: string;
+    confidence: number;
+    scene_attributes: string[];
+  };
+  colors?: {
+    dominant_colors: string[];
+    color_palette: Array<{
+      color: string;
+      percentage: number;
+    }>;
+  };
+  quality?: {
+    resolution: string;
+    sharpness_score: number;
+    brightness_score: number;
+    contrast_score: number;
+  };
+  processing_time: number;
+}
+
+interface VideoProcessingOptions {
+  extract_frames?: boolean;
+  frame_interval?: number;
+  analyze_content?: boolean;
+  detect_scenes?: boolean;
+  extract_audio?: boolean;
+  generate_summary?: boolean;
+  object_tracking?: boolean;
+}
+
+interface VideoProcessingResult {
+  frames?: Array<{
+    timestamp: number;
+    frame_url: string;
+    analysis?: ImageProcessingResult;
+  }>;
+  scenes?: Array<{
+    start_time: number;
+    end_time: number;
+    description: string;
+    confidence: number;
+  }>;
+  audio_analysis?: AudioProcessingResult;
+  content_summary?: string;
+  objects_tracked?: Array<{
+    object_id: string;
+    label: string;
+    tracking_data: Array<{
+      timestamp: number;
+      bounding_box: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      };
+    }>;
+  }>;
+  metadata: {
+    duration: number;
+    resolution: string;
+    frame_rate: number;
+    file_size: number;
+  };
+  processing_time: number;
+}
+
+interface MultiModalFusionOptions {
+  fusion_type?: 'comprehensive' | 'summary' | 'correlation';
+  cross_modal_analysis?: boolean;
+  generate_insights?: boolean;
+  correlation_analysis?: boolean;
+  output_format?: 'json' | 'text' | 'structured';
+}
+
+interface MultiModalFusionResult {
+  insights?: string;
+  correlations?: Array<{
+    modality_1: string;
+    modality_2: string;
+    correlation_type: string;
+    confidence: number;
+    description: string;
+  }>;
+  unified_summary?: string;
+  content_themes?: string[];
+  recommendations?: string[];
+  processing_metadata: {
+    files_processed: number;
+    modalities_detected: string[];
+    processing_time: number;
+  };
+}
+
+// Developer Portal Types (Phase 8 - v8.0.0)
+interface DeveloperMetrics {
+  system_health: {
+    overall_score: number;
+    uptime_percentage: number;
+    error_rate: number;
+  };
+  performance: {
+    avg_response_time: number;
+    p95_response_time: number;
+    requests_per_second: number;
+  };
+  usage: {
+    total_requests: number;
+    unique_users: number;
+    popular_endpoints: Array<{
+      endpoint: string;
+      request_count: number;
+    }>;
+  };
+}
+
+interface APIUsageStats {
+  top_endpoints: Array<{
+    endpoint: string;
+    method: string;
+    request_count: number;
+    avg_response_time: number;
+    error_rate: number;
+  }>;
+  request_volume: {
+    hourly: number[];
+    daily: number[];
+    weekly: number[];
+  };
+  user_activity: {
+    active_users: number;
+    new_users: number;
+    returning_users: number;
+  };
+}
 ```
 
 ---

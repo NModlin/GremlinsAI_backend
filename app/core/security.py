@@ -239,6 +239,18 @@ def require_permission(user_info: Dict[str, Any], required_permission: str) -> N
         )
 
 
+# FastAPI Dependencies for authentication
+async def get_current_user(request: Request) -> Dict[str, Any]:
+    """FastAPI dependency to get current authenticated user."""
+    user_info = await authenticate_request(request)
+    return require_authentication(user_info)
+
+
+async def get_current_user_optional(request: Request) -> Optional[Dict[str, Any]]:
+    """FastAPI dependency to get current user (optional authentication)."""
+    return await authenticate_request(request)
+
+
 # Initialize some demo API keys for testing
 def initialize_demo_keys():
     """Initialize demo API keys for testing."""
