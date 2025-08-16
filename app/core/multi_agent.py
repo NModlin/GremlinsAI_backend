@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from crewai import Agent, Task, Crew, Process
 from crewai_tools import SerperDevTool, WebsiteSearchTool
-from langchain_openai import ChatOpenAI
+from app.core.llm_config import get_llm, get_llm_info, LLMProvider
 from app.core.tools import duckduckgo_search
 
 logger = logging.getLogger(__name__)
@@ -14,24 +14,20 @@ class MultiAgentOrchestrator:
     Manages specialized agents for different types of tasks.
     """
     
-    def __init__(self, llm_model: str = "gpt-3.5-turbo", temperature: float = 0.1):
+    def __init__(self, llm_model: Optional[str] = None, temperature: Optional[float] = None):
         """Initialize the multi-agent orchestrator."""
-        self.llm_model = llm_model
-        self.temperature = temperature
+        self.llm_info = get_llm_info()
         self.llm = self._initialize_llm()
         self.agents = self._create_agents()
-        
+
     def _initialize_llm(self):
-        """Initialize the language model for agents."""
+        """Initialize the language model for agents using local LLM configuration."""
         try:
-            # Try to use OpenAI if API key is available
-            return ChatOpenAI(
-                model=self.llm_model,
-                temperature=self.temperature
-            )
+            llm = get_llm()
+            logger.info(f"Initialized LLM: {self.llm_info}")
+            return llm
         except Exception as e:
-            logger.warning(f"Failed to initialize OpenAI LLM: {e}")
-            # Fallback to a mock LLM for development/testing
+            logger.error(f"Failed to initialize LLM: {e}")
             return None
     
     def _create_agents(self) -> Dict[str, Agent]:
@@ -43,75 +39,101 @@ class MultiAgentOrchestrator:
             logger.warning("No LLM available, creating mock agents")
             return self._create_mock_agents()
 
+        # Log LLM provider information
+        logger.info(f"Creating agents with {self.llm_info['provider']} provider using model: {self.llm_info['model_name']}")
+
         # Research Agent - Specializes in information gathering
-        agents['researcher'] = Agent(
-            role='Research Specialist',
-            goal='Gather comprehensive and accurate information on given topics',
-            backstory="""You are an expert researcher with years of experience in
-            information gathering and fact-checking. You excel at finding reliable
-            sources and synthesizing information from multiple perspectives.""",
-            verbose=True,
-            allow_delegation=False,
-            llm=self.llm,
-            tools=[self._create_search_tool()]
-        )
+        try:
+            search_tool = self._create_search_tool()
+            tools = [search_tool] if search_tool is not None else []
+
+            agents['researcher'] = Agent(
+                role='Research Specialist',
+                goal='Gather comprehensive and accurate information on given topics',
+                backstory="""You are an expert researcher with years of experience in
+                information gathering and fact-checking. You excel at finding reliable
+                sources and synthesizing information from multiple perspectives.""",
+                verbose=True,
+                allow_delegation=False,
+                llm=self.llm,
+                tools=tools
+            )
+        except Exception as e:
+            logger.error(f"Failed to create researcher agent: {e}")
+            return self._create_mock_agents()
         
         # Analyst Agent - Specializes in data analysis and insights
-        agents['analyst'] = Agent(
-            role='Data Analyst',
-            goal='Analyze information and provide insights and recommendations',
-            backstory="""You are a skilled data analyst with expertise in pattern 
-            recognition, critical thinking, and drawing meaningful conclusions from 
-            complex information. You excel at identifying trends and relationships.""",
-            verbose=True,
-            allow_delegation=False,
-            llm=self.llm
-        )
+        try:
+            agents['analyst'] = Agent(
+                role='Data Analyst',
+                goal='Analyze information and provide insights and recommendations',
+                backstory="""You are a skilled data analyst with expertise in pattern
+                recognition, critical thinking, and drawing meaningful conclusions from
+                complex information. You excel at identifying trends and relationships.""",
+                verbose=True,
+                allow_delegation=False,
+                llm=self.llm
+            )
+        except Exception as e:
+            logger.error(f"Failed to create analyst agent: {e}")
+            return self._create_mock_agents()
         
         # Writer Agent - Specializes in content creation and communication
-        agents['writer'] = Agent(
-            role='Content Writer',
-            goal='Create clear, engaging, and well-structured content',
-            backstory="""You are an experienced writer and communicator who excels 
-            at taking complex information and presenting it in a clear, engaging, 
-            and accessible manner. You adapt your writing style to the audience.""",
-            verbose=True,
-            allow_delegation=False,
-            llm=self.llm
-        )
-        
+        try:
+            agents['writer'] = Agent(
+                role='Content Writer',
+                goal='Create clear, engaging, and well-structured content',
+                backstory="""You are an experienced writer and communicator who excels
+                at taking complex information and presenting it in a clear, engaging,
+                and accessible manner. You adapt your writing style to the audience.""",
+                verbose=True,
+                allow_delegation=False,
+                llm=self.llm
+            )
+        except Exception as e:
+            logger.error(f"Failed to create writer agent: {e}")
+            return self._create_mock_agents()
+
         # Coordinator Agent - Manages workflow and task delegation
-        agents['coordinator'] = Agent(
-            role='Project Coordinator',
-            goal='Coordinate tasks and ensure efficient workflow between agents',
-            backstory="""You are an experienced project manager who excels at 
-            breaking down complex tasks, coordinating team efforts, and ensuring 
-            quality deliverables. You understand how to leverage each team member's strengths.""",
-            verbose=True,
-            allow_delegation=True,
-            llm=self.llm
-        )
+        try:
+            agents['coordinator'] = Agent(
+                role='Project Coordinator',
+                goal='Coordinate tasks and ensure efficient workflow between agents',
+                backstory="""You are an experienced project manager who excels at
+                breaking down complex tasks, coordinating team efforts, and ensuring
+                quality deliverables. You understand how to leverage each team member's strengths.""",
+                verbose=True,
+                allow_delegation=True,
+                llm=self.llm
+            )
+        except Exception as e:
+            logger.error(f"Failed to create coordinator agent: {e}")
+            return self._create_mock_agents()
         
         return agents
     
     def _create_search_tool(self):
         """Create a search tool for the research agent."""
-        from langchain.tools import BaseTool
-        from typing import Type
+        try:
+            # Use CrewAI compatible tool from crewai_tools
+            from crewai_tools import SerperDevTool
+            # Try SerperDevTool first (requires API key)
+            return SerperDevTool()
+        except Exception:
+            try:
+                # Fallback to DuckDuckGo search from crewai_tools
+                from crewai_tools import tool
 
-        class DDGSearchTool(BaseTool):
-            name: str = "duckduckgo_search"
-            description: str = "Search the web using DuckDuckGo for current information"
+                @tool("DuckDuckGo Search")
+                def search_tool(query: str) -> str:
+                    """Search the web using DuckDuckGo for current information."""
+                    return duckduckgo_search(query)
 
-            def _run(self, query: str) -> str:
-                """Execute the search."""
-                return duckduckgo_search(query)
-
-            async def _arun(self, query: str) -> str:
-                """Async version of the search."""
-                return duckduckgo_search(query)
-
-        return DDGSearchTool()
+                return search_tool
+            except Exception:
+                # Final fallback - return None and handle gracefully
+                logger.warning("No search tools available, agents will work without search capability")
+                return None
 
     def _create_mock_agents(self) -> Dict[str, Any]:
         """Create mock agents when no LLM is available."""

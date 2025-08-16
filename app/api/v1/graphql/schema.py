@@ -701,9 +701,12 @@ class Subscription:
             break  # Temporary break
 
 
-# Create the GraphQL schema with subscriptions
+# Create the GraphQL schema with subscriptions and security extensions
+from strawberry.extensions import DisableIntrospection
+
 graphql_schema = strawberry.Schema(
     query=Query,
     mutation=Mutation,
-    subscription=Subscription
+    subscription=Subscription,
+    extensions=[DisableIntrospection()]
 )

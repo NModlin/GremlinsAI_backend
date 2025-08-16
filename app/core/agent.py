@@ -13,9 +13,17 @@ logger = logging.getLogger(__name__)
 # from langchain_core.prompts import ChatPromptTemplate
 # from langchain.agents import create_tool_calling_agent
 
-# This would be configured with a real model in later phases
-# llm = ChatOpenAI(model="gpt-4-turbo-preview", temperature=0)
-# For now, we'll simulate the agent's logic
+# LLM configuration using local models
+from app.core.llm_config import get_llm, get_llm_info
+
+# Initialize LLM (supports local models like Ollama, Hugging Face, etc.)
+try:
+    llm = get_llm()
+    llm_info = get_llm_info()
+    logger.info(f"Agent initialized with {llm_info['provider']} LLM: {llm_info['model_name']}")
+except Exception as e:
+    logger.warning(f"Failed to initialize LLM: {e}, using fallback logic")
+    llm = None
 
 # 1. Define the state
 class AgentState(TypedDict):
