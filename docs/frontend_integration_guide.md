@@ -1,4 +1,4 @@
-# GremlinsAI Frontend Integration Guide (v8.0.0)
+# GremlinsAI Frontend Integration Guide (v9.0.0)
 
 ## Table of Contents
 1. [Getting Started](#getting-started)
@@ -12,25 +12,28 @@
 
 ## Getting Started
 
-### Base URL Configuration (v8.0.0)
+### Base URL Configuration (v9.0.0)
 ```javascript
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 const WS_BASE_URL = 'ws://localhost:8000/api/v1/ws';
+const GRAPHQL_URL = 'http://localhost:8000/graphql';
 const DOCS_BASE_URL = 'http://localhost:8000/docs';
 const DEVELOPER_PORTAL_URL = 'http://localhost:8000/developer-portal';
 
 // Version information
-const API_VERSION = '8.0.0';
+const API_VERSION = '9.0.0';
+const TOTAL_ENDPOINTS = 103;
 const SUPPORTED_FEATURES = [
-  'REST API',
-  'GraphQL API',
+  'REST API (103 endpoints)',
+  'GraphQL API with Subscriptions',
   'WebSocket Real-time Communication',
   'Multi-Agent Workflows',
   'Document Management & RAG',
   'Asynchronous Task Orchestration',
   'Multi-Modal Processing (Audio, Video, Image)',
   'Developer Tools & SDKs',
-  'Interactive Documentation'
+  'Interactive Documentation',
+  'Production-Ready External Services'
 ];
 ```
 

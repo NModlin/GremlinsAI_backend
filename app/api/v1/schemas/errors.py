@@ -228,8 +228,8 @@ class ServiceUnavailableErrorExample(ErrorResponseSchema):
 class MultiModalProcessingErrorExample(ErrorResponseSchema):
     """Example multi-modal processing error response."""
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": False,
                 "error_code": "GREMLINS_6002",
@@ -255,6 +255,7 @@ class MultiModalProcessingErrorExample(ErrorResponseSchema):
                 "processing_progress": 0.15
             }
         }
+    )
 
 
 class AgentProcessingErrorExample(ErrorResponseSchema):

@@ -44,8 +44,13 @@ class MultiAgentOrchestrator:
 
         # Research Agent - Specializes in information gathering
         try:
+            from app.core.llm_config import get_specialized_llm
+
             search_tool = self._create_search_tool()
             tools = [search_tool] if search_tool is not None else []
+
+            # Use specialized LLM configuration for researcher
+            researcher_llm = get_specialized_llm('researcher')
 
             agents['researcher'] = Agent(
                 role='Research Specialist',
@@ -55,15 +60,19 @@ class MultiAgentOrchestrator:
                 sources and synthesizing information from multiple perspectives.""",
                 verbose=True,
                 allow_delegation=False,
-                llm=self.llm,
+                llm=researcher_llm,
                 tools=tools
             )
+            logger.info("Created researcher agent with specialized LLM configuration (temp=0.1)")
         except Exception as e:
             logger.error(f"Failed to create researcher agent: {e}")
             return self._create_mock_agents()
         
         # Analyst Agent - Specializes in data analysis and insights
         try:
+            # Use specialized LLM configuration for analyst
+            analyst_llm = get_specialized_llm('analyst')
+
             agents['analyst'] = Agent(
                 role='Data Analyst',
                 goal='Analyze information and provide insights and recommendations',
@@ -72,14 +81,18 @@ class MultiAgentOrchestrator:
                 complex information. You excel at identifying trends and relationships.""",
                 verbose=True,
                 allow_delegation=False,
-                llm=self.llm
+                llm=analyst_llm
             )
+            logger.info("Created analyst agent with specialized LLM configuration (temp=0.05)")
         except Exception as e:
             logger.error(f"Failed to create analyst agent: {e}")
             return self._create_mock_agents()
         
         # Writer Agent - Specializes in content creation and communication
         try:
+            # Use specialized LLM configuration for writer
+            writer_llm = get_specialized_llm('writer')
+
             agents['writer'] = Agent(
                 role='Content Writer',
                 goal='Create clear, engaging, and well-structured content',
@@ -88,14 +101,18 @@ class MultiAgentOrchestrator:
                 and accessible manner. You adapt your writing style to the audience.""",
                 verbose=True,
                 allow_delegation=False,
-                llm=self.llm
+                llm=writer_llm
             )
+            logger.info("Created writer agent with specialized LLM configuration (temp=0.3)")
         except Exception as e:
             logger.error(f"Failed to create writer agent: {e}")
             return self._create_mock_agents()
 
         # Coordinator Agent - Manages workflow and task delegation
         try:
+            # Use specialized LLM configuration for coordinator
+            coordinator_llm = get_specialized_llm('coordinator')
+
             agents['coordinator'] = Agent(
                 role='Project Coordinator',
                 goal='Coordinate tasks and ensure efficient workflow between agents',
@@ -104,8 +121,9 @@ class MultiAgentOrchestrator:
                 quality deliverables. You understand how to leverage each team member's strengths.""",
                 verbose=True,
                 allow_delegation=True,
-                llm=self.llm
+                llm=coordinator_llm
             )
+            logger.info("Created coordinator agent with specialized LLM configuration (temp=0.2)")
         except Exception as e:
             logger.error(f"Failed to create coordinator agent: {e}")
             return self._create_mock_agents()

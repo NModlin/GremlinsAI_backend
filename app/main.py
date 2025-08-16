@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal
+from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal, health
 from app.api.v1.websocket import endpoints as websocket_endpoints
 from app.database.database import ensure_data_directory
 from app.core.exceptions import GremlinsAIException
@@ -84,6 +84,7 @@ app.include_router(realtime.router, prefix="/api/v1/realtime", tags=["Real-time 
 app.include_router(docs.router, prefix="/docs", tags=["Documentation"])
 app.include_router(developer_portal.router, prefix="/developer-portal", tags=["Developer Portal"])
 app.include_router(multimodal.router, prefix="/api/v1/multimodal", tags=["Multi-Modal"])
+app.include_router(health.router, prefix="/api/v1/health", tags=["Health & Monitoring"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
@@ -92,7 +93,7 @@ async def read_root():
     """
     return {
         "message": "Welcome to the gremlinsAI API!",
-        "version": "8.0.0",
+        "version": "9.0.0",
         "features": [
             "REST API",
             "GraphQL API",

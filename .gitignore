@@ -132,10 +132,20 @@ dmypy.json
 data/*.db
 data/*.db-journal
 *.log
-test_*.py
-validate_*.py
 *_COMPLETE.md
 COMPREHENSIVE_TEST_RESULTS.md
+
+# Temporary and build files
+*.msi
+*.exe
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Documentation artifacts
+GremlinAI*.docx
+GremlinAI*.md
 
 # IDE
 .vscode/

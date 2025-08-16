@@ -190,8 +190,8 @@ class MultiModalFusionResponse(BaseModel):
     processing_time: float = Field(..., description="Fusion processing time in seconds")
     timestamp: str = Field(..., description="Fusion timestamp")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": True,
                 "fusion_strategy": "concatenate",
@@ -205,6 +205,7 @@ class MultiModalFusionResponse(BaseModel):
                 "timestamp": "2024-01-01T12:00:00"
             }
         }
+    )
 
 
 class MultiModalProcessResponse(BaseModel):
@@ -217,8 +218,8 @@ class MultiModalProcessResponse(BaseModel):
     fused_result: Dict[str, Any] = Field(..., description="Fused result")
     timestamp: str = Field(..., description="Processing timestamp")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": True,
                 "processed_files": 3,
@@ -235,6 +236,7 @@ class MultiModalProcessResponse(BaseModel):
                 "timestamp": "2024-01-01T12:00:00"
             }
         }
+    )
 
 
 class MultiModalCapabilities(BaseModel):
@@ -249,8 +251,8 @@ class MultiModalCapabilities(BaseModel):
     fusion_strategies: List[str] = Field(..., description="Available fusion strategies")
     timestamp: str = Field(..., description="Capability check timestamp")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": True,
                 "capabilities": {
@@ -268,6 +270,7 @@ class MultiModalCapabilities(BaseModel):
                 "timestamp": "2024-01-01T12:00:00"
             }
         }
+    )
 
 
 class MultiModalContentSummary(BaseModel):
@@ -281,8 +284,8 @@ class MultiModalContentSummary(BaseModel):
     processing_status: str = Field(..., description="Processing status")
     created_at: str = Field(..., description="Creation timestamp")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "content_123",
                 "conversation_id": "conv_456",
@@ -293,6 +296,7 @@ class MultiModalContentSummary(BaseModel):
                 "created_at": "2024-01-01T12:00:00"
             }
         }
+    )
 
 
 class ConversationMultiModalContent(BaseModel):
@@ -304,8 +308,8 @@ class ConversationMultiModalContent(BaseModel):
     content: List[MultiModalContentSummary] = Field(..., description="Content summaries")
     timestamp: str = Field(..., description="Retrieval timestamp")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": True,
                 "conversation_id": "conv_456",
@@ -324,6 +328,7 @@ class ConversationMultiModalContent(BaseModel):
                 "timestamp": "2024-01-01T12:00:00"
             }
         }
+    )
 
 
 class TextToSpeechRequest(BaseModel):
@@ -336,8 +341,8 @@ class TextToSpeechRequest(BaseModel):
         description="Voice settings (speed, pitch, etc.)"
     )
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "text": "Hello, this is a text-to-speech conversion.",
                 "output_format": "wav",
@@ -347,6 +352,7 @@ class TextToSpeechRequest(BaseModel):
                 }
             }
         }
+    )
 
 
 class TextToSpeechResponse(BaseModel):
@@ -382,8 +388,8 @@ class MultiModalHealthResponse(BaseModel):
     capabilities: Dict[str, bool] = Field(..., description="Detailed capability status")
     timestamp: str = Field(..., description="Health check timestamp")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "status": "healthy",
                 "available_capabilities": 3,
@@ -398,3 +404,4 @@ class MultiModalHealthResponse(BaseModel):
                 "timestamp": "2024-01-01T12:00:00"
             }
         }
+    )
