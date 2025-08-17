@@ -19,6 +19,9 @@ sqlalchemy>=2.0.0,<3.0.0
 alembic>=1.13.0,<2.0.0
 aiosqlite>=0.19.0,<1.0.0
 
+# Vector Database (Phase 2: Weaviate Migration)
+weaviate-client>=4.4.0,<5.0.0
+
 # Utilities
 python-dotenv>=1.0.0,<2.0.0
 pydantic>=2.0.0,<3.0.0
