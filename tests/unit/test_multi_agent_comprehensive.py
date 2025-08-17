@@ -31,9 +31,9 @@ import threading
 class ProductionMultiAgentSystem:
     """
     Production-ready multi-agent system implementation.
-    
+
     This class represents the production version of the multi-agent system
-    that would be implemented according to the prometheus.md specifications.
+    for the GremlinsAI transformation project.
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
