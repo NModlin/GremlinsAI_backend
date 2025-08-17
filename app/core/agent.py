@@ -31,6 +31,8 @@ from app.core.context_store import get_context_store
 from app.monitoring.metrics import metrics
 from app.core.memory_manager import MemoryManager
 from app.tools import get_tool_registry
+from app.core.task_planner import get_task_planner, ExecutionPlan, PlanStep, PlanStepStatus
+from app.core.agent_learning import get_learning_service, AgentLearning
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,8 @@ class AgentResult:
     total_steps: int
     success: bool
     error_message: Optional[str] = None
+    execution_plan: Optional[ExecutionPlan] = None
+    plan_used: bool = False
 
 
 class AgentState(TypedDict):
@@ -68,36 +72,49 @@ class AgentState(TypedDict):
 
 class ProductionAgent:
     """
-    Production-grade agent implementing the ReAct pattern.
+    Production-grade agent implementing advanced planning with ReAct execution.
 
-    The agent follows a reasoning loop:
-    1. Thought: Analyze the problem and decide what to do
-    2. Action: Execute a tool or provide final answer
-    3. Observation: Process the result and continue or finish
+    The agent now follows an enhanced reasoning loop:
+    1. Planning: Analyze complex goals and create structured execution plans
+    2. Execution: Execute plan steps using appropriate tools
+    3. Monitoring: Track progress and adjust plans as needed
+    4. Fallback: Use traditional ReAct pattern for simple queries
 
     Features:
-    - Multi-step reasoning capability
+    - Advanced goal decomposition and planning
+    - Multi-step plan execution with dependency management
+    - Dynamic plan adjustment based on execution results
     - Tool selection and execution
     - Error handling and recovery
     - Conversation context management
     - Performance monitoring
     """
 
-    def __init__(self, max_iterations: int = 10, max_execution_time: int = 300):
+    def __init__(self, max_iterations: int = 10, max_execution_time: int = 300,
+                 planning_threshold: float = 0.3, weaviate_client=None):
         """
-        Initialize the ProductionAgent with memory capabilities.
+        Initialize the ProductionAgent with planning, memory, and learning capabilities.
 
         Args:
             max_iterations: Maximum number of reasoning steps
             max_execution_time: Maximum execution time in seconds
+            planning_threshold: Complexity threshold for using planning vs ReAct
+            weaviate_client: Optional Weaviate client for learning storage
         """
         self.llm_manager = ProductionLLMManager()
         self.max_iterations = max_iterations
         self.max_execution_time = max_execution_time
+        self.planning_threshold = planning_threshold
 
         # Memory and context management
         self.context_store = get_context_store()
         self.memory_manager = MemoryManager()
+
+        # Task planner for complex goals
+        self.task_planner = get_task_planner()
+
+        # Learning service for adaptation
+        self.learning_service = get_learning_service(weaviate_client)
 
         # Get tool registry
         self.tool_registry = get_tool_registry()
@@ -113,7 +130,57 @@ class ProductionAgent:
         # ReAct prompt template
         self.react_prompt = self._create_react_prompt()
 
-        logger.info(f"ProductionAgent initialized with {len(self.tools)} tools and memory system")
+        logger.info(f"ProductionAgent initialized with {len(self.tools)} tools, planning, memory, and learning system")
+
+    async def _assess_query_complexity(self, query: str) -> float:
+        """
+        Assess the complexity of a query to determine if planning is needed.
+
+        Args:
+            query: The user query to assess
+
+        Returns:
+            Complexity score between 0.0 and 1.0
+        """
+        try:
+            # Use LLM to assess complexity
+            complexity_prompt = f"""Analyze the following query and assess its complexity on a scale of 0.0 to 1.0:
+
+0.0-0.2: Simple queries (basic facts, single calculations, direct questions)
+0.3-0.5: Moderate queries (research tasks, comparisons, multi-step problems)
+0.6-0.8: Complex queries (analysis, planning, creative tasks, multi-domain problems)
+0.9-1.0: Very complex queries (strategic planning, comprehensive research, multi-step projects)
+
+Consider these factors:
+- Number of steps required
+- Domain knowledge needed
+- Tools and resources required
+- Time and effort involved
+- Interdependencies between tasks
+
+Query: "{query}"
+
+Respond with only a number between 0.0 and 1.0 representing the complexity score."""
+
+            response = await self.llm_manager.generate_response(
+                prompt=complexity_prompt,
+                max_tokens=50,
+                temperature=0.1
+            )
+
+            # Extract numeric score
+            import re
+            score_match = re.search(r'(\d+\.?\d*)', response.strip())
+            if score_match:
+                score = float(score_match.group(1))
+                return min(max(score, 0.0), 1.0)  # Clamp between 0.0 and 1.0
+            else:
+                logger.warning(f"Could not parse complexity score from: {response}")
+                return 0.5  # Default to moderate complexity
+
+        except Exception as e:
+            logger.error(f"Error assessing query complexity: {e}")
+            return 0.5  # Default to moderate complexity
 
     def _create_tool_wrapper(self, tool_name: str):
         """Create a wrapper function for a registered tool."""
@@ -357,25 +424,337 @@ User: {{user_query}}"""
         except Exception as e:
             logger.error(f"Error saving conversation context: {e}")
 
-    def _create_memory_aware_prompt(self, user_query: str, context: ConversationContext) -> str:
-        """Create a ReAct prompt that includes memory context."""
+    async def _create_memory_aware_prompt(self, user_query: str, context: ConversationContext) -> str:
+        """Create a ReAct prompt that includes memory and learning context."""
         # Get memory context for the prompt
         memory_context = self.memory_manager.get_memory_context_for_prompt(context)
 
-        # Format the prompt with memory context
+        # Get learning context from past experiences
+        learning_context = await self._apply_learning_context(user_query)
+
+        # Format the prompt with memory and learning context
+        context_sections = []
+
         if memory_context:
-            memory_section = f"\n=== MEMORY CONTEXT ===\n{memory_context}\n=== END MEMORY CONTEXT ===\n"
-        else:
-            memory_section = ""
+            context_sections.append(f"=== MEMORY CONTEXT ===\n{memory_context}\n=== END MEMORY CONTEXT ===")
+
+        if learning_context:
+            context_sections.append(f"=== LEARNING CONTEXT ===\n{learning_context}\n=== END LEARNING CONTEXT ===")
+
+        combined_context = "\n\n".join(context_sections) if context_sections else ""
 
         return self.react_prompt.format(
             user_query=user_query,
-            memory_context=memory_section
+            memory_context=combined_context
         )
+
+    async def _execute_plan(self, plan: ExecutionPlan, conversation_id: Optional[str] = None) -> AgentResult:
+        """
+        Execute a structured plan step by step.
+
+        Args:
+            plan: The execution plan to follow
+            conversation_id: Optional conversation ID for context
+
+        Returns:
+            AgentResult with execution results
+        """
+        reasoning_steps = []
+        start_time = datetime.utcnow()
+
+        try:
+            logger.info(f"Executing plan {plan.plan_id} with {plan.total_steps} steps")
+
+            step_count = 0
+            max_plan_steps = min(plan.total_steps, self.max_iterations)
+
+            while not self.task_planner.is_plan_complete(plan) and step_count < max_plan_steps:
+                # Check execution time limit
+                elapsed_time = (datetime.utcnow() - start_time).total_seconds()
+                if elapsed_time > self.max_execution_time:
+                    error_msg = f"Plan execution timeout after {elapsed_time:.1f} seconds"
+                    logger.warning(error_msg)
+                    break
+
+                # Get next executable step
+                next_step = self.task_planner.get_next_executable_step(plan)
+                if not next_step:
+                    logger.warning("No executable steps available, checking for failures")
+                    break
+
+                # Update step status to in progress
+                self.task_planner.update_step_status(plan, next_step.step_id, PlanStepStatus.IN_PROGRESS)
+
+                # Execute the step
+                step_start_time = datetime.utcnow()
+                step_result = await self._execute_plan_step(next_step)
+                step_execution_time = (datetime.utcnow() - step_start_time).total_seconds()
+
+                # Create reasoning step for tracking
+                reasoning_step = ReasoningStep(
+                    step_number=step_count + 1,
+                    thought=f"Executing plan step: {next_step.title}",
+                    action=next_step.required_tools[0] if next_step.required_tools else "direct_execution",
+                    action_input=next_step.description,
+                    observation=step_result
+                )
+                reasoning_steps.append(reasoning_step)
+
+                # Update step status based on result
+                if "Error:" in step_result or "Failed:" in step_result:
+                    self.task_planner.update_step_status(
+                        plan, next_step.step_id, PlanStepStatus.FAILED,
+                        actual_output=step_result,
+                        execution_time=step_execution_time,
+                        error_message=step_result
+                    )
+
+                    # Attempt plan adjustment for critical failures
+                    if step_count < 3:  # Only adjust early in execution
+                        logger.info("Attempting plan adjustment due to step failure")
+                        adjusted_plan = await self.task_planner.adjust_plan(
+                            plan,
+                            {"failed_step": next_step.step_id, "error": step_result},
+                            f"Step {next_step.step_id} failed: {step_result}"
+                        )
+                        if adjusted_plan.total_steps != plan.total_steps:
+                            plan = adjusted_plan
+                            logger.info(f"Plan adjusted to {plan.total_steps} steps")
+                else:
+                    self.task_planner.update_step_status(
+                        plan, next_step.step_id, PlanStepStatus.COMPLETED,
+                        actual_output=step_result,
+                        execution_time=step_execution_time
+                    )
+
+                step_count += 1
+
+            # Generate final answer based on plan execution
+            progress = self.task_planner.get_plan_progress(plan)
+
+            if progress["completion_percentage"] >= 80:
+                # Plan mostly completed successfully
+                completed_outputs = []
+                for step in plan.steps:
+                    if step.status == PlanStepStatus.COMPLETED and step.actual_output:
+                        completed_outputs.append(f"- {step.title}: {step.actual_output}")
+
+                final_answer = f"""I have successfully executed a structured plan to address your request: "{plan.goal}"
+
+Plan Execution Summary:
+- Total Steps: {plan.total_steps}
+- Completed: {progress['completed_steps']} ({progress['completion_percentage']:.1f}%)
+- Failed: {progress['failed_steps']}
+
+Key Results:
+{chr(10).join(completed_outputs) if completed_outputs else "Plan execution completed with mixed results."}
+
+The structured approach allowed me to break down your complex request into manageable steps and execute them systematically."""
+
+                success = True
+            else:
+                # Plan execution had significant issues
+                final_answer = f"""I attempted to execute a structured plan for your request: "{plan.goal}", but encountered some challenges.
+
+Plan Execution Summary:
+- Total Steps: {plan.total_steps}
+- Completed: {progress['completed_steps']} ({progress['completion_percentage']:.1f}%)
+- Failed: {progress['failed_steps']}
+
+While I wasn't able to complete all planned steps, I've provided the best results possible based on the successful portions of the plan."""
+
+                success = progress["completed_steps"] > 0
+
+            # Record successful agent query metrics
+            metrics.record_agent_query(
+                agent_type="production_agent_planned",
+                reasoning_steps=len(reasoning_steps),
+                success=success
+            )
+
+            return AgentResult(
+                final_answer=final_answer,
+                reasoning_steps=reasoning_steps,
+                total_steps=len(reasoning_steps),
+                success=success,
+                execution_plan=plan,
+                plan_used=True
+            )
+
+        except Exception as e:
+            error_msg = f"Plan execution error: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+
+            return AgentResult(
+                final_answer=f"I apologize, but an error occurred while executing the plan: {str(e)}",
+                reasoning_steps=reasoning_steps,
+                total_steps=len(reasoning_steps),
+                success=False,
+                error_message=error_msg,
+                execution_plan=plan,
+                plan_used=True
+            )
+
+    async def _execute_plan_step(self, step: PlanStep) -> str:
+        """
+        Execute a single plan step using the appropriate tools.
+
+        Args:
+            step: The plan step to execute
+
+        Returns:
+            Result of step execution
+        """
+        try:
+            logger.info(f"Executing step: {step.title}")
+
+            # If no tools specified, use web search as default
+            if not step.required_tools:
+                step.required_tools = ["web_search"]
+
+            # Execute using the first available tool
+            for tool_name in step.required_tools:
+                if tool_name in self.tools:
+                    tool_func = self.tools[tool_name]
+
+                    # Prepare tool input based on step description
+                    tool_input = step.description
+
+                    # Execute the tool
+                    if tool_name == "final_answer":
+                        result = tool_func(step.expected_output)
+                    else:
+                        result = await self._execute_tool(tool_name, tool_input)
+
+                    return f"Step completed: {result}"
+
+            # If no tools available, return description as result
+            return f"Step noted: {step.description} (Expected: {step.expected_output})"
+
+        except Exception as e:
+            error_msg = f"Error executing step {step.step_id}: {str(e)}"
+            logger.error(error_msg)
+            return f"Error: {error_msg}"
+
+    async def self_reflection(self, agent_result: AgentResult, original_query: str,
+                            execution_time: float) -> Optional[AgentLearning]:
+        """
+        Perform self-reflection on completed task to extract learning insights.
+
+        This method analyzes the agent's performance on a completed task,
+        identifies areas for improvement, and stores learning insights for
+        future adaptation.
+
+        Args:
+            agent_result: The result from agent execution
+            original_query: The original user query
+            execution_time: Total execution time in seconds
+
+        Returns:
+            AgentLearning object with analysis and insights, or None if reflection fails
+        """
+        try:
+            logger.info(f"Starting self-reflection on task: {original_query[:100]}...")
+
+            # Only perform reflection on complex tasks or failures
+            should_reflect = (
+                agent_result.plan_used or  # Complex tasks that used planning
+                not agent_result.success or  # Failed tasks to learn from errors
+                agent_result.total_steps >= 5 or  # Multi-step tasks
+                execution_time > 30  # Long-running tasks
+            )
+
+            if not should_reflect:
+                logger.info("Task too simple for reflection, skipping learning")
+                return None
+
+            # Analyze performance and extract insights
+            learning = await self.learning_service.analyze_performance(
+                agent_result=agent_result,
+                original_query=original_query,
+                execution_time=execution_time
+            )
+
+            # Store learning in Weaviate for future reference
+            stored = await self.learning_service.store_learning(learning)
+
+            if stored:
+                logger.info(f"Learning insights stored: {learning.learning_id}")
+                logger.info(f"Performance category: {learning.performance_category.value}")
+                logger.info(f"Insights extracted: {len(learning.learning_insights)}")
+
+                # Log key insights for monitoring
+                for insight in learning.learning_insights[:3]:  # Top 3 insights
+                    logger.info(f"Insight: {insight.title} (confidence: {insight.confidence_score:.2f})")
+            else:
+                logger.warning("Failed to store learning insights")
+
+            return learning
+
+        except Exception as e:
+            logger.error(f"Error during self-reflection: {e}", exc_info=True)
+            return None
+
+    async def _apply_learning_context(self, query: str) -> str:
+        """
+        Apply learning context to improve task execution.
+
+        Retrieves similar past learnings and incorporates insights
+        into the current task execution.
+
+        Args:
+            query: The current user query
+
+        Returns:
+            Enhanced context with learning insights
+        """
+        try:
+            # Retrieve similar learnings
+            similar_learnings = await self.learning_service.retrieve_similar_learnings(
+                query=query,
+                limit=3
+            )
+
+            if not similar_learnings:
+                return ""
+
+            # Generate learning context
+            learning_summary = self.learning_service.get_learning_summary(similar_learnings)
+
+            context_parts = []
+
+            # Add performance insights
+            if learning_summary["total_learnings"] > 0:
+                context_parts.append(f"Based on {learning_summary['total_learnings']} similar past tasks:")
+
+                # Add top insights
+                for insight in learning_summary["top_insights"][:3]:
+                    context_parts.append(
+                        f"- {insight['title']}: {insight['suggestion']} "
+                        f"(confidence: {insight['confidence']:.1f})"
+                    )
+
+                # Add strategy recommendations
+                if learning_summary["strategy_recommendations"]:
+                    context_parts.append("Key strategies to consider:")
+                    for rec in learning_summary["strategy_recommendations"][:2]:
+                        context_parts.append(f"- {rec}")
+
+            learning_context = "\n".join(context_parts)
+
+            if learning_context:
+                logger.info(f"Applied learning context from {len(similar_learnings)} past experiences")
+                return f"\n\nLEARNING CONTEXT (from past experiences):\n{learning_context}\n"
+
+            return ""
+
+        except Exception as e:
+            logger.error(f"Error applying learning context: {e}")
+            return ""
 
     async def reason_and_act(self, user_query: str, conversation_id: Optional[str] = None) -> AgentResult:
         """
-        Execute the ReAct reasoning loop for the given query with memory awareness.
+        Execute the enhanced reasoning loop with planning for complex queries.
 
         Args:
             user_query: The user's question or request
@@ -399,6 +778,48 @@ User: {{user_query}}"""
             })
 
         try:
+            # Apply learning context from past experiences
+            learning_context = await self._apply_learning_context(user_query)
+
+            # Assess query complexity to determine approach
+            complexity_score = await self._assess_query_complexity(user_query)
+            logger.info(f"Query complexity assessed: {complexity_score:.2f}")
+
+            # Use planning approach for complex queries
+            if complexity_score >= self.planning_threshold:
+                logger.info("Using planning approach for complex query")
+
+                # Generate execution plan
+                execution_plan = await self.task_planner.analyze_and_plan(user_query)
+
+                # Execute the plan
+                result = await self._execute_plan(execution_plan, conversation_id)
+
+                # Process memory and save context
+                if context:
+                    # Add assistant response to context
+                    context.messages.append({
+                        'role': 'assistant',
+                        'content': result.final_answer,
+                        'timestamp': datetime.utcnow().isoformat()
+                    })
+
+                    # Process memory from this conversation turn
+                    context = self.memory_manager.process_conversation_turn(context, result.total_steps)
+
+                    # Save updated context with memory
+                    self._save_conversation_context(context)
+
+                # Perform self-reflection for learning and adaptation
+                learning = await self.self_reflection(result, user_query,
+                                                    (datetime.utcnow() - start_time).total_seconds())
+                if learning:
+                    logger.info(f"Self-reflection completed: {learning.performance_category.value}")
+
+                return result
+
+            # Use traditional ReAct approach for simple queries
+            logger.info("Using traditional ReAct approach for simple query")
             # Initialize conversation context
             conversation_history = ""
 
@@ -418,9 +839,12 @@ User: {{user_query}}"""
 
                 # Create memory-aware prompt with conversation history
                 if context:
-                    prompt = self._create_memory_aware_prompt(user_query, context)
+                    prompt = await self._create_memory_aware_prompt(user_query, context)
                 else:
-                    prompt = self.react_prompt.format(user_query=user_query, memory_context="")
+                    # Apply learning context even without conversation context
+                    learning_context = await self._apply_learning_context(user_query)
+                    context_section = f"\n\n{learning_context}" if learning_context else ""
+                    prompt = self.react_prompt.format(user_query=user_query, memory_context=context_section)
 
                 if conversation_history:
                     prompt += f"\n\nPrevious steps:\n{conversation_history}"
@@ -484,12 +908,21 @@ User: {{user_query}}"""
                             success=True
                         )
 
-                        return AgentResult(
+                        result = AgentResult(
                             final_answer=final_answer,
                             reasoning_steps=reasoning_steps,
                             total_steps=step_num,
-                            success=True
+                            success=True,
+                            plan_used=False
                         )
+
+                        # Perform self-reflection for learning and adaptation
+                        learning = await self.self_reflection(result, user_query,
+                                                            (datetime.utcnow() - start_time).total_seconds())
+                        if learning:
+                            logger.info(f"Self-reflection completed: {learning.performance_category.value}")
+
+                        return result
                 else:
                     # No action provided, treat as error
                     current_step.observation = "Error: No valid action provided"
@@ -528,7 +961,8 @@ User: {{user_query}}"""
                 reasoning_steps=reasoning_steps,
                 total_steps=self.max_iterations,
                 success=False,
-                error_message=error_msg
+                error_message=error_msg,
+                plan_used=False
             )
 
         except Exception as e:
@@ -547,7 +981,8 @@ User: {{user_query}}"""
                 reasoning_steps=reasoning_steps,
                 total_steps=len(reasoning_steps),
                 success=False,
-                error_message=error_msg
+                error_message=error_msg,
+                plan_used=False
             )
 
 # Global agent instance

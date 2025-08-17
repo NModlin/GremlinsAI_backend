@@ -1,0 +1,394 @@
+# kubernetes/ollama_autoscaler.yaml
+---
+# Ollama GPU-Optimized Deployment with Advanced Resource Management
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-gpu
+  namespace: gremlinsai
+  labels:
+    app: ollama
+    component: llm-inference
+    tier: gpu-compute
+    optimization: "gpu-memory-optimized"
+spec:
+  replicas: 2  # Initial replicas, will be managed by HPA
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+        component: llm-inference
+        tier: gpu-compute
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "11434"
+        prometheus.io/path: "/metrics"
+        # GPU optimization annotations
+        optimization.gremlinsai.com/gpu-memory-optimized: "true"
+        optimization.gremlinsai.com/dynamic-model-loading: "true"
+        optimization.gremlinsai.com/tiered-routing: "enabled"
+    spec:
+      # Node selection for GPU nodes
+      nodeSelector:
+        accelerator: nvidia-tesla-gpu
+      
+      # Tolerations for GPU nodes
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      
+      # Anti-affinity to distribute across GPU nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ollama
+              topologyKey: kubernetes.io/hostname
+      
+      containers:
+      - name: ollama
+        image: ollama/ollama:latest
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - containerPort: 11434
+          name: http
+          protocol: TCP
+        
+        env:
+        # GPU Configuration
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility"
+        
+        # Ollama Optimization Settings
+        - name: OLLAMA_HOST
+          value: "0.0.0.0:11434"
+        - name: OLLAMA_ORIGINS
+          value: "*"
+        - name: OLLAMA_NUM_PARALLEL
+          value: "4"  # Concurrent requests
+        - name: OLLAMA_MAX_LOADED_MODELS
+          value: "3"  # Dynamic model management
+        - name: OLLAMA_KEEP_ALIVE
+          value: "5m"  # Model keep-alive time
+        - name: OLLAMA_FLASH_ATTENTION
+          value: "1"  # Enable flash attention for efficiency
+        
+        # Memory Management
+        - name: OLLAMA_MAX_VRAM
+          value: "20GB"  # Reserve some VRAM for system
+        - name: OLLAMA_GPU_MEMORY_FRACTION
+          value: "0.85"  # Use 85% of GPU memory
+        
+        # Performance Tuning
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: CUDA_CACHE_DISABLE
+          value: "0"
+        
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+            nvidia.com/gpu: 1
+          limits:
+            memory: "16Gi"
+            cpu: "8000m"
+            nvidia.com/gpu: 1
+        
+        # Health checks optimized for GPU workloads
+        livenessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 60  # Allow time for GPU initialization
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 2
+        
+        # Startup probe for slow GPU model loading
+        startupProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 12  # Allow up to 2 minutes for startup
+        
+        volumeMounts:
+        - name: ollama-models
+          mountPath: /root/.ollama
+        - name: gpu-metrics
+          mountPath: /var/lib/nvidia
+          readOnly: true
+      
+      # Sidecar container for GPU metrics collection
+      - name: gpu-metrics-exporter
+        image: nvidia/dcgm-exporter:3.1.8-3.1.5-ubuntu20.04
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - containerPort: 9400
+          name: metrics
+          protocol: TCP
+        
+        env:
+        - name: DCGM_EXPORTER_LISTEN
+          value: ":9400"
+        - name: DCGM_EXPORTER_KUBERNETES
+          value: "true"
+        
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        
+        securityContext:
+          capabilities:
+            add: ["SYS_ADMIN"]
+        
+        volumeMounts:
+        - name: gpu-metrics
+          mountPath: /var/lib/nvidia
+          readOnly: true
+      
+      volumes:
+      - name: ollama-models
+        persistentVolumeClaim:
+          claimName: ollama-models-pvc
+      - name: gpu-metrics
+        hostPath:
+          path: /var/lib/nvidia
+          type: Directory
+      
+      # Security context for GPU access
+      securityContext:
+        fsGroup: 1000
+
+---
+# Persistent Volume Claim for Ollama Models
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models-pvc
+  namespace: gremlinsai
+  labels:
+    app: ollama
+    component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd  # Use fast storage for model loading
+  resources:
+    requests:
+      storage: 500Gi  # Large storage for multiple models
+
+---
+# Service for Ollama
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-service
+  namespace: gremlinsai
+  labels:
+    app: ollama
+    component: llm-inference
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "11434"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 11434
+    targetPort: 11434
+    protocol: TCP
+    name: http
+  - port: 9400
+    targetPort: 9400
+    protocol: TCP
+    name: gpu-metrics
+  selector:
+    app: ollama
+
+---
+# Horizontal Pod Autoscaler for GPU-based Scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ollama-gpu-hpa
+  namespace: gremlinsai
+  labels:
+    app: ollama
+    component: autoscaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ollama-gpu
+  
+  minReplicas: 1
+  maxReplicas: 8  # Scale up to 8 GPU pods maximum
+  
+  # Scaling behavior configuration
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 180  # 3 minutes stabilization
+      policies:
+      - type: Percent
+        value: 50  # Scale up by 50% of current replicas
+        periodSeconds: 60
+      - type: Pods
+        value: 2  # Or add 2 pods maximum per minute
+        periodSeconds: 60
+      selectPolicy: Min  # Use the more conservative policy
+    
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 minutes stabilization for scale down
+      policies:
+      - type: Percent
+        value: 25  # Scale down by 25% of current replicas
+        periodSeconds: 120
+      - type: Pods
+        value: 1  # Or remove 1 pod maximum per 2 minutes
+        periodSeconds: 120
+      selectPolicy: Min  # Use the more conservative policy
+  
+  # Metrics for scaling decisions
+  metrics:
+  # GPU Utilization (primary metric)
+  - type: Pods
+    pods:
+      metric:
+        name: nvidia_gpu_utilization
+      target:
+        type: AverageValue
+        averageValue: "70"  # Target 70% GPU utilization
+  
+  # GPU Memory Utilization
+  - type: Pods
+    pods:
+      metric:
+        name: nvidia_gpu_memory_utilization
+      target:
+        type: AverageValue
+        averageValue: "80"  # Target 80% GPU memory utilization
+  
+  # Request Queue Length (custom metric)
+  - type: Pods
+    pods:
+      metric:
+        name: ollama_request_queue_length
+      target:
+        type: AverageValue
+        averageValue: "5"  # Scale when queue length > 5
+  
+  # Response Time (custom metric)
+  - type: Pods
+    pods:
+      metric:
+        name: ollama_avg_response_time_seconds
+      target:
+        type: AverageValue
+        averageValue: "3"  # Scale when avg response time > 3s
+
+---
+# ServiceMonitor for Prometheus GPU Metrics Collection
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ollama-gpu-metrics
+  namespace: gremlinsai
+  labels:
+    app: ollama
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: ollama
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+  - port: gpu-metrics
+    path: /metrics
+    interval: 15s  # More frequent GPU metrics collection
+    scrapeTimeout: 10s
+
+---
+# PodDisruptionBudget for High Availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ollama-pdb
+  namespace: gremlinsai
+  labels:
+    app: ollama
+spec:
+  minAvailable: 1  # Always keep at least 1 pod running
+  selector:
+    matchLabels:
+      app: ollama
+
+---
+# NetworkPolicy for Ollama Security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ollama-network-policy
+  namespace: gremlinsai
+  labels:
+    app: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: ollama
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: gremlinsai
+    - podSelector:
+        matchLabels:
+          component: llm-manager
+    ports:
+    - protocol: TCP
+      port: 11434
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9400  # GPU metrics
+  egress:
+  - {}  # Allow all egress for model downloads

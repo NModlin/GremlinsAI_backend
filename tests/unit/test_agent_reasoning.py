@@ -15,6 +15,7 @@ import pytest
 import asyncio
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from datetime import datetime
+import json
 
 import sys
 import os
@@ -22,6 +23,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from app.core.agent import ProductionAgent, ReasoningStep, AgentResult, process_query
 from app.core.llm_manager import LLMResponse
+from app.core.task_planner import ExecutionPlan, PlanStep, PlanStepType, PlanStepStatus
 
 
 class TestProductionAgent:
@@ -372,6 +374,243 @@ Action Input: test query""",
             assert result.final_answer == "Test answer"
             assert result.success is True
             mock_agent.reason_and_act.assert_called_once_with("Test query", "conv-123")
+
+    @pytest.mark.asyncio
+    async def test_complex_goal_planning_and_execution(self):
+        """Test that complex goals trigger planning and generate valid multi-step plans."""
+        complex_goal = "Plan a comprehensive marketing campaign for a new AI-powered productivity app targeting remote workers"
+
+        # Mock the complexity assessment to return high complexity
+        mock_complexity_response = "0.8"
+
+        # Mock the planning response with a valid JSON plan
+        mock_plan_response = json.dumps({
+            "goal_analysis": {
+                "goal": complex_goal,
+                "goal_type": "creation",
+                "complexity_score": 0.8,
+                "key_requirements": ["market research", "target audience analysis", "campaign strategy", "content creation"]
+            },
+            "execution_plan": {
+                "total_steps": 4,
+                "estimated_duration": 240,
+                "steps": [
+                    {
+                        "step_id": "step_1",
+                        "step_number": 1,
+                        "title": "Market Research",
+                        "description": "Research the remote work productivity app market and competitors",
+                        "step_type": "research",
+                        "required_tools": ["web_search"],
+                        "expected_output": "Market analysis report with competitor insights",
+                        "dependencies": [],
+                        "estimated_duration": 60
+                    },
+                    {
+                        "step_id": "step_2",
+                        "step_number": 2,
+                        "title": "Target Audience Analysis",
+                        "description": "Analyze remote worker demographics and pain points",
+                        "step_type": "analysis",
+                        "required_tools": ["web_search", "text_processor"],
+                        "expected_output": "Target audience profile and personas",
+                        "dependencies": ["step_1"],
+                        "estimated_duration": 60
+                    },
+                    {
+                        "step_id": "step_3",
+                        "step_number": 3,
+                        "title": "Campaign Strategy Development",
+                        "description": "Develop comprehensive marketing strategy based on research",
+                        "step_type": "creation",
+                        "required_tools": ["text_processor"],
+                        "expected_output": "Marketing strategy document with channels and messaging",
+                        "dependencies": ["step_1", "step_2"],
+                        "estimated_duration": 60
+                    },
+                    {
+                        "step_id": "step_4",
+                        "step_number": 4,
+                        "title": "Content Creation Plan",
+                        "description": "Create detailed content calendar and asset requirements",
+                        "step_type": "creation",
+                        "required_tools": ["text_processor"],
+                        "expected_output": "Content calendar with asset specifications",
+                        "dependencies": ["step_3"],
+                        "estimated_duration": 60
+                    }
+                ],
+                "success_criteria": ["Complete market analysis", "Defined target personas", "Strategic marketing plan", "Content calendar"],
+                "fallback_strategies": ["Simplify campaign scope", "Focus on primary channels", "Use template-based approach"]
+            }
+        })
+
+        # Mock step execution results
+        mock_step_results = [
+            "Step completed: Market research shows strong demand for productivity apps among remote workers...",
+            "Step completed: Target audience analysis reveals key demographics: 25-45 years old professionals...",
+            "Step completed: Marketing strategy developed focusing on LinkedIn, content marketing, and webinars...",
+            "Step completed: Content calendar created with 12 weeks of planned content across multiple channels..."
+        ]
+
+        with patch('app.core.agent.ProductionLLMManager') as mock_llm_manager_class, \
+             patch('app.core.agent.get_tool_registry') as mock_tool_registry, \
+             patch('app.core.agent.get_task_planner') as mock_task_planner_func, \
+             patch('app.core.agent.get_context_store') as mock_context_store, \
+             patch('app.core.agent.MemoryManager') as mock_memory_manager:
+
+            # Setup mocks
+            mock_llm_manager = AsyncMock()
+            mock_llm_manager_class.return_value = mock_llm_manager
+
+            # Mock complexity assessment and planning responses
+            mock_llm_manager.generate_response.side_effect = [
+                mock_complexity_response,  # Complexity assessment
+                mock_plan_response,        # Planning response
+            ]
+
+            mock_registry = MagicMock()
+            mock_registry.list_tools.return_value = ["web_search", "text_processor", "calculator"]
+            mock_registry.get_tool.return_value = MagicMock(description="Mock tool")
+            mock_tool_registry.return_value = mock_registry
+
+            mock_task_planner = MagicMock()
+            mock_task_planner_func.return_value = mock_task_planner
+
+            # Create a mock execution plan
+            mock_execution_plan = ExecutionPlan(
+                plan_id="test_plan_123",
+                goal=complex_goal,
+                goal_type="creation",
+                complexity_score=0.8,
+                total_steps=4,
+                estimated_duration=240,
+                steps=[
+                    PlanStep(
+                        step_id="step_1",
+                        step_number=1,
+                        title="Market Research",
+                        description="Research the remote work productivity app market and competitors",
+                        step_type=PlanStepType.RESEARCH,
+                        required_tools=["web_search"],
+                        expected_output="Market analysis report with competitor insights",
+                        dependencies=[],
+                        estimated_duration=60
+                    ),
+                    PlanStep(
+                        step_id="step_2",
+                        step_number=2,
+                        title="Target Audience Analysis",
+                        description="Analyze remote worker demographics and pain points",
+                        step_type=PlanStepType.ANALYSIS,
+                        required_tools=["web_search", "text_processor"],
+                        expected_output="Target audience profile and personas",
+                        dependencies=["step_1"],
+                        estimated_duration=60
+                    ),
+                    PlanStep(
+                        step_id="step_3",
+                        step_number=3,
+                        title="Campaign Strategy Development",
+                        description="Develop comprehensive marketing strategy based on research",
+                        step_type=PlanStepType.CREATION,
+                        required_tools=["text_processor"],
+                        expected_output="Marketing strategy document with channels and messaging",
+                        dependencies=["step_1", "step_2"],
+                        estimated_duration=60
+                    ),
+                    PlanStep(
+                        step_id="step_4",
+                        step_number=4,
+                        title="Content Creation Plan",
+                        description="Create detailed content calendar and asset requirements",
+                        step_type=PlanStepType.CREATION,
+                        required_tools=["text_processor"],
+                        expected_output="Content calendar with asset specifications",
+                        dependencies=["step_3"],
+                        estimated_duration=60
+                    )
+                ],
+                required_tools=["web_search", "text_processor"],
+                success_criteria=["Complete market analysis", "Defined target personas", "Strategic marketing plan", "Content calendar"],
+                fallback_strategies=["Simplify campaign scope", "Focus on primary channels", "Use template-based approach"]
+            )
+
+            # Mock task planner methods - analyze_and_plan should be async
+            mock_analyze_and_plan = AsyncMock(return_value=mock_execution_plan)
+            mock_task_planner.analyze_and_plan = mock_analyze_and_plan
+            mock_task_planner.get_next_executable_step.side_effect = [
+                mock_execution_plan.steps[0],  # First step
+                mock_execution_plan.steps[1],  # Second step
+                mock_execution_plan.steps[2],  # Third step
+                mock_execution_plan.steps[3],  # Fourth step
+                None  # No more steps
+            ]
+            mock_task_planner.is_plan_complete.side_effect = [False, False, False, False, True]
+            mock_task_planner.get_plan_progress.return_value = {
+                "total_steps": 4,
+                "completed_steps": 4,
+                "failed_steps": 0,
+                "in_progress_steps": 0,
+                "completion_percentage": 100.0,
+                "is_complete": True
+            }
+
+            # Mock other dependencies
+            mock_context_store.return_value = MagicMock()
+            mock_memory_manager.return_value = MagicMock()
+
+            # Create agent with low planning threshold to ensure planning is used
+            agent = ProductionAgent(max_iterations=5, max_execution_time=300, planning_threshold=0.3)
+
+            # Mock tool execution to return step results
+            step_result_iter = iter(mock_step_results)
+            async def mock_execute_tool(action, action_input):
+                return next(step_result_iter)
+
+            agent._execute_tool = mock_execute_tool
+
+            # Execute the complex goal
+            result = await agent.reason_and_act(complex_goal)
+
+            # Verify that planning was triggered and a valid plan was generated
+            assert result.success is True
+            assert result.plan_used is True
+            assert result.execution_plan is not None
+            assert result.execution_plan.plan_id == "test_plan_123"
+            assert result.execution_plan.total_steps == 4
+            assert result.execution_plan.goal == complex_goal
+
+            # Verify that the task planner was called to analyze and plan
+            mock_analyze_and_plan.assert_called_once_with(complex_goal)
+
+            # Verify that the plan contains the expected steps
+            plan = result.execution_plan
+            assert len(plan.steps) == 4
+            assert plan.steps[0].title == "Market Research"
+            assert plan.steps[1].title == "Target Audience Analysis"
+            assert plan.steps[2].title == "Campaign Strategy Development"
+            assert plan.steps[3].title == "Content Creation Plan"
+
+            # Verify that steps have proper dependencies
+            assert plan.steps[0].dependencies == []
+            assert plan.steps[1].dependencies == ["step_1"]
+            assert plan.steps[2].dependencies == ["step_1", "step_2"]
+            assert plan.steps[3].dependencies == ["step_3"]
+
+            # Verify that required tools are identified
+            assert "web_search" in plan.required_tools
+            assert "text_processor" in plan.required_tools
+
+            # Verify that the final answer indicates successful plan execution
+            assert "structured plan" in result.final_answer.lower()
+            assert "marketing campaign" in result.final_answer.lower()
+            assert "completed" in result.final_answer.lower()
+
+            # Verify that complexity assessment was performed
+            complexity_calls = [call for call in mock_llm_manager.generate_response.call_args_list
+                              if "complexity" in str(call)]
+            assert len(complexity_calls) >= 1
 
 
 if __name__ == "__main__":

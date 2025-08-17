@@ -41,6 +41,8 @@ class WeaviateSchemaManager:
             self._create_document_chunk_class()
             self._create_agent_interaction_class()
             self._create_multimodal_content_class()
+            self._create_agent_learning_class()
+            self._create_analytics_metrics_class()
             
             logger.info("Weaviate schema creation completed successfully")
             return True
@@ -441,6 +443,137 @@ class WeaviateSchemaManager:
             )
         )
 
+    def _create_agent_learning_class(self) -> None:
+        """Create AgentLearning class for agent learning and adaptation."""
+        logger.info("Creating AgentLearning class...")
+
+        self.client.collections.create(
+            name="AgentLearning",
+            properties=[
+                Property(
+                    name="learningId",
+                    data_type=DataType.TEXT,
+                    description="Unique learning record identifier"
+                ),
+                Property(
+                    name="taskId",
+                    data_type=DataType.TEXT,
+                    description="Original task identifier"
+                ),
+                Property(
+                    name="agentType",
+                    data_type=DataType.TEXT,
+                    description="Type of agent that performed the task"
+                ),
+                Property(
+                    name="originalQuery",
+                    data_type=DataType.TEXT,
+                    description="Original user query or task"
+                ),
+                Property(
+                    name="performanceCategory",
+                    data_type=DataType.TEXT,
+                    description="Performance assessment category"
+                ),
+                Property(
+                    name="performanceMetrics",
+                    data_type=DataType.OBJECT,
+                    description="Detailed performance metrics"
+                ),
+                Property(
+                    name="taskTranscript",
+                    data_type=DataType.OBJECT,
+                    description="Complete task execution transcript"
+                ),
+                Property(
+                    name="reflectionAnalysis",
+                    data_type=DataType.TEXT,
+                    description="Self-reflection analysis text"
+                ),
+                Property(
+                    name="learningInsights",
+                    data_type=DataType.OBJECT_ARRAY,
+                    description="Extracted learning insights"
+                ),
+                Property(
+                    name="strategyUpdates",
+                    data_type=DataType.TEXT_ARRAY,
+                    description="Strategy update recommendations"
+                ),
+                Property(
+                    name="createdAt",
+                    data_type=DataType.DATE,
+                    description="Learning record creation timestamp"
+                ),
+                Property(
+                    name="metadata",
+                    data_type=DataType.OBJECT,
+                    description="Additional learning metadata"
+                ),
+                Property(
+                    name="embedding",
+                    data_type=DataType.NUMBER_ARRAY,
+                    description="Learning content embedding for similarity search"
+                )
+            ],
+            vectorizer_config=Configure.Vectorizer.text2vec_transformers(
+                vectorize_collection_name=False
+            )
+        )
+
+        logger.info("Created AgentLearning class successfully")
+
+    def _create_analytics_metrics_class(self):
+        """Create AnalyticsMetrics class for storing aggregated analytics data."""
+        logger.info("Creating AnalyticsMetrics class...")
+
+        self.client.collections.create(
+            name="AnalyticsMetrics",
+            description="Aggregated analytics metrics and insights",
+            properties=[
+                Property(
+                    name="metricId",
+                    data_type=DataType.TEXT,
+                    description="Unique metric identifier"
+                ),
+                Property(
+                    name="metricType",
+                    data_type=DataType.TEXT,
+                    description="Type of metric (tool_usage, query_trends, performance)"
+                ),
+                Property(
+                    name="timeWindow",
+                    data_type=DataType.TEXT,
+                    description="Time window for aggregation (1h, 24h, 7d, 30d)"
+                ),
+                Property(
+                    name="timestamp",
+                    data_type=DataType.DATE,
+                    description="Metric generation timestamp"
+                ),
+                Property(
+                    name="value",
+                    data_type=DataType.NUMBER,
+                    description="Primary metric value"
+                ),
+                Property(
+                    name="metadata",
+                    data_type=DataType.TEXT,
+                    description="Additional metric metadata as JSON"
+                ),
+                Property(
+                    name="dimensions",
+                    data_type=DataType.TEXT,
+                    description="Metric dimensions as JSON"
+                )
+            ],
+            vectorizer_config=Configure.Vectorizer.text2vec_transformers(
+                model="sentence-transformers/all-MiniLM-L6-v2"
+            )
+        )
+
+        logger.info("Created AnalyticsMetrics class successfully")
+
     def delete_schema(self) -> bool:
         """
         Delete all schema classes (for testing/cleanup).
@@ -457,7 +590,9 @@ class WeaviateSchemaManager:
                 "Document",
                 "DocumentChunk",
                 "AgentInteraction",
-                "MultiModalContent"
+                "MultiModalContent",
+                "AgentLearning",
+                "AnalyticsMetrics"
             ]
 
             for class_name in class_names:
