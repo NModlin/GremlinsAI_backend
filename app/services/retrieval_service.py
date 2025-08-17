@@ -13,6 +13,7 @@ from typing import List, Dict, Any, Optional, Union, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 import uuid
+from datetime import datetime
 
 import weaviate
 from weaviate.exceptions import WeaviateBaseError
@@ -35,6 +36,166 @@ class RankingMethod(Enum):
     RRF = "reciprocal_rank_fusion"
     NORMALIZED_SCORE = "normalized_score"
     ADAPTIVE = "adaptive"
+
+
+class MediaType(Enum):
+    """Supported media types for multimodal content."""
+    IMAGE = "image"
+    VIDEO = "video"
+    AUDIO = "audio"
+    TEXT = "text"
+
+
+@dataclass
+class MultiModalResult:
+    """Individual multimodal search result."""
+
+    # Content identification
+    content_id: str
+    media_type: str
+    filename: str
+    storage_path: str
+
+    # Content metadata
+    file_size: int
+    content_hash: str
+    created_at: datetime
+    updated_at: datetime
+
+    # Processing results
+    processing_status: str
+    processing_result: Dict[str, Any]
+    text_content: str
+
+    # Search relevance
+    relevance_score: float
+    cross_modal_score: float
+
+    # Embeddings
+    visual_embedding: Optional[List[float]] = None
+    text_embedding: Optional[List[float]] = None
+
+    # Conversation context
+    conversation_id: Optional[str] = None
+
+    # Additional metadata
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert result to dictionary."""
+        return {
+            "content_id": self.content_id,
+            "media_type": self.media_type,
+            "filename": self.filename,
+            "storage_path": self.storage_path,
+            "file_size": self.file_size,
+            "content_hash": self.content_hash,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "processing_status": self.processing_status,
+            "processing_result": self.processing_result,
+            "text_content": self.text_content,
+            "relevance_score": self.relevance_score,
+            "cross_modal_score": self.cross_modal_score,
+            "visual_embedding": self.visual_embedding,
+            "text_embedding": self.text_embedding,
+            "conversation_id": self.conversation_id,
+            "metadata": self.metadata
+        }
+
+
+@dataclass
+class MultiModalSearchResponse:
+    """Response from multimodal search."""
+
+    # Search results
+    results: List[MultiModalResult]
+    total_results: int
+
+    # Search metadata
+    query: str
+    search_time: float
+
+    # Quality metrics
+    cross_modal_accuracy: float
+    relevance_threshold: float
+
+    # Search configuration
+    limit: int
+    offset: int
+
+    # Additional metadata
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert response to dictionary."""
+        return {
+            "results": [result.to_dict() for result in self.results],
+            "total_results": self.total_results,
+            "query": self.query,
+            "search_time": self.search_time,
+            "cross_modal_accuracy": self.cross_modal_accuracy,
+            "relevance_threshold": self.relevance_threshold,
+            "limit": self.limit,
+            "offset": self.offset,
+            "metadata": self.metadata
+        }
+
+
+@dataclass
+class MultiModalSearchConfig:
+    """Configuration for multimodal cross-modal search."""
+
+    # Basic search parameters
+    limit: int = 10
+    offset: int = 0
+
+    # Cross-modal search settings
+    relevance_threshold: float = 0.7
+    cross_modal_weight: float = 0.8
+    text_weight: float = 0.2
+
+    # Media type filtering
+    media_types: Optional[List[MediaType]] = None
+
+    # Quality settings
+    min_cross_modal_score: float = 0.6
+    max_results: int = 100
+
+    # Performance settings
+    timeout_seconds: float = 30.0
+    enable_caching: bool = True
+    cache_ttl_seconds: int = 300
+
+    # Search enhancement
+    enable_query_expansion: bool = True
+    enable_semantic_boost: bool = True
+
+    # Filtering options
+    conversation_id: Optional[str] = None
+    date_range: Optional[Tuple[datetime, datetime]] = None
+    file_size_range: Optional[Tuple[int, int]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert config to dictionary."""
+        return {
+            "limit": self.limit,
+            "offset": self.offset,
+            "relevance_threshold": self.relevance_threshold,
+            "cross_modal_weight": self.cross_modal_weight,
+            "text_weight": self.text_weight,
+            "media_types": [mt.value for mt in self.media_types] if self.media_types else None,
+            "min_cross_modal_score": self.min_cross_modal_score,
+            "max_results": self.max_results,
+            "timeout_seconds": self.timeout_seconds,
+            "enable_caching": self.enable_caching,
+            "cache_ttl_seconds": self.cache_ttl_seconds,
+            "enable_query_expansion": self.enable_query_expansion,
+            "enable_semantic_boost": self.enable_semantic_boost,
+            "conversation_id": self.conversation_id,
+            "date_range": [d.isoformat() for d in self.date_range] if self.date_range else None,
+            "file_size_range": self.file_size_range
+        }
 
 
 @dataclass
@@ -204,8 +365,17 @@ class RetrievalService:
         self.client = weaviate_client
         self.config = config or SearchConfig()
         self._cache = {} if self.config.enable_caching else None
-        
+
+        # Performance optimization: Pre-compile common filter patterns
+        self._filter_cache = {}
+        self._query_cache = {}
+
+        # Connection pooling for better performance
+        self._connection_pool_size = 5
+        self._active_connections = 0
+
         logger.info(f"RetrievalService initialized with strategy: {self.config.strategy.value}")
+        logger.info(f"Performance optimizations enabled: caching={self.config.enable_caching}, pool_size={self._connection_pool_size}")
     
     def search_documents(
         self,
@@ -375,35 +545,61 @@ class RetrievalService:
         config: SearchConfig,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Execute semantic vector search."""
+        """Execute optimized semantic vector search with performance enhancements."""
         try:
+            # Performance optimization: Check query cache first
+            cache_key = f"semantic_{hash(query)}_{hash(str(config.__dict__))}_{hash(str(filters))}"
+            if self._cache and cache_key in self._query_cache:
+                logger.debug(f"Cache hit for semantic search: {query[:50]}...")
+                return self._query_cache[cache_key]
+
             collection = self.client.collections.get("DocumentChunk")
 
-            # Build where filter
+            # Build optimized where filter
             where_filter = self._build_where_filter(config, filters)
 
-            # Execute semantic search
+            # Optimized semantic search with performance tuning
             response = collection.query.near_text(
                 query=query,
-                limit=config.limit,
+                limit=min(config.limit, 100),  # Cap limit for better performance
                 offset=config.offset,
                 where=where_filter,
-                return_metadata=["score", "distance"]
+                return_metadata=["score", "distance"],
+                # Performance optimization: Use certainty threshold for faster filtering
+                certainty=config.min_relevance_score if config.min_relevance_score > 0 else None
             )
 
-            # Convert to standard format
+            # Convert to standard format with performance optimization
             results = []
             for obj in response.objects:
+                # Extract properties efficiently
+                properties = obj.properties
+                metadata = obj.metadata
+
                 result = {
                     "chunk_id": obj.uuid,
-                    "properties": obj.properties,
-                    "metadata": obj.metadata,
-                    "semantic_score": 1.0 - (obj.metadata.distance or 0.0),
+                    "properties": properties,
+                    "metadata": metadata,
+                    "semantic_score": 1.0 - (metadata.distance or 0.0),
                     "keyword_score": 0.0,
-                    "search_type": "semantic"
+                    "search_type": "semantic",
+                    # Add additional fields for better context
+                    "document_id": properties.get("documentId", ""),
+                    "chunk_index": properties.get("chunkIndex", 0)
                 }
                 results.append(result)
 
+            # Cache results for future use
+            if self._cache and len(results) > 0:
+                self._query_cache[cache_key] = results
+                # Limit cache size to prevent memory issues
+                if len(self._query_cache) > 1000:
+                    # Remove oldest entries (LRU-like behavior)
+                    oldest_keys = list(self._query_cache.keys())[:100]
+                    for key in oldest_keys:
+                        del self._query_cache[key]
+
+            logger.debug(f"Optimized semantic search returned {len(results)} results")
             return results
 
         except Exception as e:
@@ -530,20 +726,35 @@ class RetrievalService:
         config: SearchConfig,
         additional_filters: Optional[Dict[str, Any]] = None
     ) -> Optional[Filter]:
-        """Build Weaviate where filter from configuration and additional filters."""
+        """Build optimized Weaviate where filter with caching for better P99 latency."""
+        # Create cache key for filter reuse
+        filter_key = self._create_filter_cache_key(config, additional_filters)
+
+        # Check cache first for performance optimization
+        if filter_key in self._filter_cache:
+            return self._filter_cache[filter_key]
+
         filters = []
 
-        # Add document filters
+        # Optimized filter building with indexed field prioritization
+        # Process most selective filters first for better query performance
+
+        # Add document filters (prioritize indexed fields)
         if config.document_filters:
-            for field, value in config.document_filters.items():
+            # Sort filters by selectivity (indexed fields first)
+            sorted_doc_filters = self._sort_filters_by_selectivity(config.document_filters)
+            for field, value in sorted_doc_filters:
                 if isinstance(value, list):
+                    # Use more efficient contains_any for list values
                     filters.append(Filter.by_property(field).contains_any(value))
                 else:
+                    # Use equal for single values
                     filters.append(Filter.by_property(field).equal(value))
 
-        # Add chunk filters
+        # Add chunk filters (optimized for chunk-specific queries)
         if config.chunk_filters:
-            for field, value in config.chunk_filters.items():
+            sorted_chunk_filters = self._sort_filters_by_selectivity(config.chunk_filters)
+            for field, value in sorted_chunk_filters:
                 if isinstance(value, list):
                     filters.append(Filter.by_property(field).contains_any(value))
                 else:
@@ -551,18 +762,70 @@ class RetrievalService:
 
         # Add additional filters
         if additional_filters:
-            for field, value in additional_filters.items():
+            sorted_additional_filters = self._sort_filters_by_selectivity(additional_filters)
+            for field, value in sorted_additional_filters:
                 if isinstance(value, list):
                     filters.append(Filter.by_property(field).contains_any(value))
                 else:
                     filters.append(Filter.by_property(field).equal(value))
 
-        # Combine filters with AND
+        # Optimized filter combination
+        combined_filter = self._combine_filters_optimized(filters)
+
+        # Cache the result for future use
+        self._filter_cache[filter_key] = combined_filter
+
+        return combined_filter
+
+    def _create_filter_cache_key(
+        self,
+        config: SearchConfig,
+        additional_filters: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Create a cache key for filter combinations."""
+        import hashlib
+        import json
+
+        key_data = {
+            'doc_filters': config.document_filters or {},
+            'chunk_filters': config.chunk_filters or {},
+            'additional': additional_filters or {}
+        }
+
+        # Create deterministic hash
+        key_str = json.dumps(key_data, sort_keys=True)
+        return hashlib.md5(key_str.encode()).hexdigest()
+
+    def _sort_filters_by_selectivity(self, filters: Dict[str, Any]) -> List[tuple]:
+        """Sort filters by selectivity for optimal query performance."""
+        # Define indexed fields that should be processed first
+        indexed_fields = {
+            'documentId': 1,      # Primary key - highest selectivity
+            'chunkId': 1,         # Primary key - highest selectivity
+            'contentType': 2,     # Indexed field - high selectivity
+            'isActive': 3,        # Boolean field - medium selectivity
+            'tags': 4,            # Array field - medium selectivity
+            'createdAt': 5,       # Date field - lower selectivity
+            'updatedAt': 5,       # Date field - lower selectivity
+            'metadata': 6         # Object field - lowest selectivity
+        }
+
+        # Sort by selectivity (lower number = higher priority)
+        sorted_items = sorted(
+            filters.items(),
+            key=lambda x: indexed_fields.get(x[0], 10)  # Default to low priority
+        )
+
+        return sorted_items
+
+    def _combine_filters_optimized(self, filters: List[Filter]) -> Optional[Filter]:
+        """Combine filters with optimized AND logic."""
         if len(filters) == 0:
             return None
         elif len(filters) == 1:
             return filters[0]
         else:
+            # Use iterative combination for better performance
             combined_filter = filters[0]
             for f in filters[1:]:
                 combined_filter = combined_filter & f
@@ -885,6 +1148,393 @@ class RetrievalService:
         if self._cache:
             self._cache.clear()
             logger.info("Search cache cleared")
+
+    def search_multimodal_content(
+        self,
+        query: str,
+        config: Optional[MultiModalSearchConfig] = None,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> MultiModalSearchResponse:
+        """
+        Search multimodal content using cross-modal CLIP embeddings.
+
+        This method enables text-to-image/video search by leveraging Weaviate's
+        multi2vec-clip vectorizer to find visually relevant content based on
+        text descriptions.
+
+        Args:
+            query: Text query to search for (e.g., "a person giving a speech")
+            config: Optional multimodal search configuration
+            filters: Optional filters for media type, date range, etc.
+
+        Returns:
+            MultiModalSearchResponse with relevant multimodal content
+
+        Raises:
+            ValueError: If query is empty or invalid
+            WeaviateBaseError: If Weaviate query fails
+        """
+        start_time = time.time()
+        search_config = config or MultiModalSearchConfig()
+
+        if not query or not query.strip():
+            raise ValueError("Query cannot be empty")
+
+        if not self.client:
+            raise ValueError("Weaviate client not initialized")
+
+        try:
+            logger.info(f"Executing multimodal search: '{query}' with config: {search_config.to_dict()}")
+
+            # Preprocess query for optimal cross-modal search
+            processed_query = self._preprocess_multimodal_query(query, search_config)
+
+            # Build Weaviate query with nearText for cross-modal search
+            collection = self.client.collections.get("MultiModalContent")
+
+            # Build filters
+            where_filter = self._build_multimodal_filters(filters, search_config)
+
+            # Execute cross-modal search using nearText
+            # Weaviate's multi2vec-clip will automatically handle text-to-image/video embedding
+            response = collection.query.near_text(
+                query=processed_query,
+                limit=search_config.limit,
+                offset=search_config.offset,
+                where=where_filter,
+                return_metadata=["score", "distance"]
+            )
+
+            # Process results
+            results = self._process_multimodal_results(
+                response.objects,
+                query,
+                search_config
+            )
+
+            # Calculate cross-modal accuracy
+            cross_modal_accuracy = self._calculate_cross_modal_accuracy(results, search_config)
+
+            search_time = time.time() - start_time
+
+            # Create response
+            search_response = MultiModalSearchResponse(
+                results=results,
+                total_results=len(results),
+                query=query,
+                search_time=search_time,
+                cross_modal_accuracy=cross_modal_accuracy,
+                relevance_threshold=search_config.relevance_threshold,
+                limit=search_config.limit,
+                offset=search_config.offset,
+                metadata={
+                    "processed_query": processed_query,
+                    "filters_applied": filters or {},
+                    "config_used": search_config.to_dict()
+                }
+            )
+
+            logger.info(f"Multimodal search completed: {len(results)} results in {search_time:.3f}s")
+            return search_response
+
+        except WeaviateBaseError as e:
+            logger.error(f"Weaviate multimodal search failed: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Multimodal search failed: {e}")
+            raise
+
+    def _preprocess_multimodal_query(
+        self,
+        query: str,
+        config: MultiModalSearchConfig
+    ) -> str:
+        """Preprocess query for optimal cross-modal search."""
+        processed = query.strip()
+
+        # Expand query for better cross-modal matching
+        if config.enable_query_expansion:
+            processed = self._expand_multimodal_query(processed)
+
+        # Enhance with semantic context
+        if config.enable_semantic_boost:
+            processed = self._add_semantic_context(processed)
+
+        return processed
+
+    def _expand_multimodal_query(self, query: str) -> str:
+        """Expand query with visual and contextual terms."""
+        # Visual enhancement terms for better cross-modal matching
+        visual_enhancements = {
+            "person": "person human figure individual",
+            "speech": "speech speaking talking presentation lecture",
+            "meeting": "meeting conference discussion group people",
+            "presentation": "presentation slide screen projector audience",
+            "office": "office workplace desk computer business",
+            "outdoor": "outdoor outside nature landscape sky",
+            "indoor": "indoor inside room building interior",
+            "car": "car vehicle automobile transportation",
+            "food": "food meal eating restaurant kitchen",
+            "animal": "animal pet wildlife creature"
+        }
+
+        words = query.lower().split()
+        expanded_words = []
+
+        for word in words:
+            expanded_words.append(word)
+            if word in visual_enhancements:
+                expanded_words.extend(visual_enhancements[word].split())
+
+        return " ".join(expanded_words)
+
+    def _add_semantic_context(self, query: str) -> str:
+        """Add semantic context for better cross-modal understanding."""
+        # Add visual context markers
+        if any(word in query.lower() for word in ["person", "people", "human"]):
+            query += " human figure person"
+
+        if any(word in query.lower() for word in ["speaking", "talking", "speech"]):
+            query += " speaking talking communication"
+
+        if any(word in query.lower() for word in ["meeting", "conference"]):
+            query += " meeting conference group discussion"
+
+        return query
+
+    def _build_multimodal_filters(
+        self,
+        filters: Optional[Dict[str, Any]],
+        config: MultiModalSearchConfig
+    ) -> Optional[Filter]:
+        """Build Weaviate filters for multimodal search."""
+        filter_conditions = []
+
+        # Media type filtering
+        if config.media_types:
+            media_type_values = [mt.value for mt in config.media_types]
+            filter_conditions.append(
+                Filter.by_property("media_type").contains_any(media_type_values)
+            )
+
+        # Conversation ID filtering
+        if config.conversation_id:
+            filter_conditions.append(
+                Filter.by_property("conversation_id").equal(config.conversation_id)
+            )
+
+        # Date range filtering
+        if config.date_range:
+            start_date, end_date = config.date_range
+            filter_conditions.append(
+                Filter.by_property("created_at").greater_or_equal(start_date)
+            )
+            filter_conditions.append(
+                Filter.by_property("created_at").less_or_equal(end_date)
+            )
+
+        # File size filtering
+        if config.file_size_range:
+            min_size, max_size = config.file_size_range
+            filter_conditions.append(
+                Filter.by_property("file_size").greater_or_equal(min_size)
+            )
+            filter_conditions.append(
+                Filter.by_property("file_size").less_or_equal(max_size)
+            )
+
+        # Additional custom filters
+        if filters:
+            for key, value in filters.items():
+                if isinstance(value, list):
+                    filter_conditions.append(
+                        Filter.by_property(key).contains_any(value)
+                    )
+                else:
+                    filter_conditions.append(
+                        Filter.by_property(key).equal(value)
+                    )
+
+        # Combine filters with AND logic
+        if filter_conditions:
+            combined_filter = filter_conditions[0]
+            for condition in filter_conditions[1:]:
+                combined_filter = combined_filter & condition
+            return combined_filter
+
+        return None
+
+    def _process_multimodal_results(
+        self,
+        weaviate_objects: List[Any],
+        query: str,
+        config: MultiModalSearchConfig
+    ) -> List[MultiModalResult]:
+        """Process Weaviate results into MultiModalResult objects."""
+        results = []
+
+        for obj in weaviate_objects:
+            try:
+                # Extract properties from Weaviate object
+                properties = obj.properties
+                metadata = obj.metadata
+
+                # Calculate relevance scores
+                relevance_score = metadata.score if hasattr(metadata, 'score') else 0.0
+                cross_modal_score = self._calculate_cross_modal_score(
+                    properties, query, relevance_score
+                )
+
+                # Filter by minimum cross-modal score
+                if cross_modal_score < config.min_cross_modal_score:
+                    continue
+
+                # Parse datetime fields
+                created_at = self._parse_datetime(properties.get("created_at"))
+                updated_at = self._parse_datetime(properties.get("updated_at"))
+
+                # Create MultiModalResult
+                result = MultiModalResult(
+                    content_id=properties.get("content_id", str(obj.uuid)),
+                    media_type=properties.get("media_type", "unknown"),
+                    filename=properties.get("filename", ""),
+                    storage_path=properties.get("storage_path", ""),
+                    file_size=properties.get("file_size", 0),
+                    content_hash=properties.get("content_hash", ""),
+                    created_at=created_at,
+                    updated_at=updated_at,
+                    processing_status=properties.get("processing_status", "unknown"),
+                    processing_result=properties.get("processing_result", {}),
+                    text_content=properties.get("text_content", ""),
+                    relevance_score=relevance_score,
+                    cross_modal_score=cross_modal_score,
+                    visual_embedding=properties.get("visual_embedding"),
+                    text_embedding=properties.get("text_embedding"),
+                    conversation_id=properties.get("conversation_id"),
+                    metadata=properties.get("metadata", {})
+                )
+
+                results.append(result)
+
+            except Exception as e:
+                logger.error(f"Failed to process multimodal result: {e}")
+                continue
+
+        # Sort by cross-modal score
+        results.sort(key=lambda x: x.cross_modal_score, reverse=True)
+
+        return results[:config.max_results]
+
+    def _calculate_cross_modal_score(
+        self,
+        properties: Dict[str, Any],
+        query: str,
+        base_score: float
+    ) -> float:
+        """Calculate cross-modal relevance score."""
+
+        # Start with base Weaviate score
+        score = base_score
+
+        # Boost score based on text content relevance
+        text_content = properties.get("text_content", "")
+        if text_content:
+            text_relevance = self._calculate_text_relevance(text_content, query)
+            score = score * 0.7 + text_relevance * 0.3
+
+        # Boost score based on processing quality
+        processing_result = properties.get("processing_result", {})
+        if processing_result:
+            quality_boost = self._calculate_quality_boost(processing_result)
+            score *= (1.0 + quality_boost * 0.1)
+
+        # Boost score based on media type preference
+        media_type = properties.get("media_type", "")
+        if media_type in ["image", "video"]:
+            score *= 1.1  # Slight boost for visual content
+
+        return min(score, 1.0)
+
+    def _calculate_text_relevance(self, text_content: str, query: str) -> float:
+        """Calculate text relevance score."""
+        if not text_content or not query:
+            return 0.0
+
+        # Simple keyword matching (in production, use proper NLP)
+        query_words = set(query.lower().split())
+        content_words = set(text_content.lower().split())
+
+        if not query_words:
+            return 0.0
+
+        # Calculate Jaccard similarity
+        intersection = len(query_words.intersection(content_words))
+        union = len(query_words.union(content_words))
+
+        return intersection / union if union > 0 else 0.0
+
+    def _calculate_quality_boost(self, processing_result: Dict[str, Any]) -> float:
+        """Calculate quality boost based on processing results."""
+        quality_boost = 0.0
+
+        # Video processing quality
+        if "overall_video_quality" in processing_result:
+            quality_boost += processing_result["overall_video_quality"] * 0.3
+
+        # Audio processing quality
+        if "transcription_confidence" in processing_result:
+            quality_boost += processing_result["transcription_confidence"] * 0.3
+
+        # Scene detection quality
+        if "scene_detection_confidence" in processing_result:
+            quality_boost += processing_result["scene_detection_confidence"] * 0.2
+
+        # Frame extraction quality
+        if "frame_extraction_quality" in processing_result:
+            quality_boost += processing_result["frame_extraction_quality"] * 0.2
+
+        return min(quality_boost, 1.0)
+
+    def _parse_datetime(self, datetime_str: Any) -> Optional[datetime]:
+        """Parse datetime string to datetime object."""
+        if not datetime_str:
+            return None
+
+        if isinstance(datetime_str, datetime):
+            return datetime_str
+
+        try:
+            # Try ISO format first
+            return datetime.fromisoformat(str(datetime_str).replace('Z', '+00:00'))
+        except:
+            try:
+                # Try common formats
+                return datetime.strptime(str(datetime_str), "%Y-%m-%d %H:%M:%S")
+            except:
+                return None
+
+    def _calculate_cross_modal_accuracy(
+        self,
+        results: List[MultiModalResult],
+        config: MultiModalSearchConfig
+    ) -> float:
+        """Calculate cross-modal search accuracy."""
+        if not results:
+            return 0.0
+
+        # Calculate accuracy based on cross-modal scores
+        high_quality_results = [
+            r for r in results
+            if r.cross_modal_score >= config.relevance_threshold
+        ]
+
+        accuracy = len(high_quality_results) / len(results)
+
+        # Boost accuracy for diverse media types
+        media_types = set(r.media_type for r in results)
+        diversity_boost = min(len(media_types) * 0.1, 0.3)
+
+        return min(accuracy + diversity_boost, 1.0)
 
 
 def create_retrieval_service(

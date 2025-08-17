@@ -7,6 +7,7 @@ from datetime import datetime
 from app.services.document_service import DocumentService
 from app.core.vector_store import vector_store
 from app.core.multi_agent import multi_agent_orchestrator
+from app.monitoring.metrics import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +55,14 @@ class RAGSystem:
         Returns:
             Dict containing the generated response and metadata
         """
+        import time
+        start_time = time.time()
+
         try:
             # Use defaults if not specified
             search_limit = search_limit or self.default_search_limit
             score_threshold = score_threshold or self.default_score_threshold
-            
+
             # Step 1: Retrieve relevant documents
             retrieved_docs, search_query_id = await DocumentService.semantic_search(
                 db=db,
@@ -68,6 +72,18 @@ class RAGSystem:
                 filter_conditions=filter_conditions,
                 search_type=search_type,
                 conversation_id=conversation_id
+            )
+
+            # Record RAG retrieval metrics
+            retrieval_duration = time.time() - start_time
+            relevance_scores = [doc.get('score', 0.0) for doc in retrieved_docs]
+
+            metrics.record_rag_retrieval(
+                operation="retrieve_and_generate",
+                search_type=search_type or "semantic",
+                duration=retrieval_duration,
+                relevance_scores=relevance_scores,
+                documents_count=len(retrieved_docs)
             )
             
             # Step 2: Prepare context from retrieved documents

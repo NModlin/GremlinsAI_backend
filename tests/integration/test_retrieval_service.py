@@ -9,6 +9,7 @@ import pytest
 from unittest.mock import Mock, MagicMock, patch
 import uuid
 from typing import List, Dict, Any
+from datetime import datetime
 
 from app.services.retrieval_service import (
     RetrievalService,
@@ -17,6 +18,10 @@ from app.services.retrieval_service import (
     RankingMethod,
     SearchResult,
     SearchResponse,
+    MultiModalSearchConfig,
+    MultiModalResult,
+    MultiModalSearchResponse,
+    MediaType,
     create_retrieval_service
 )
 
@@ -419,3 +424,200 @@ class TestRetrievalService:
         assert service.config.semantic_weight == 0.8
         assert service.config.keyword_weight == 0.2
         assert service.config.limit == 20
+
+    def test_multimodal_search_content(self, mock_weaviate_client):
+        """Test multimodal cross-modal search functionality."""
+        client, collection = mock_weaviate_client
+
+        # Mock multimodal search results
+        mock_multimodal_objects = [
+            Mock(
+                uuid=uuid.uuid4(),
+                properties={
+                    'content_id': 'content_1',
+                    'media_type': 'image',
+                    'filename': 'presentation_slide.jpg',
+                    'storage_path': '/media/images/presentation_slide.jpg',
+                    'file_size': 1024000,
+                    'content_hash': 'abc123',
+                    'created_at': '2024-01-01T10:00:00Z',
+                    'updated_at': '2024-01-01T10:00:00Z',
+                    'processing_status': 'completed',
+                    'processing_result': {
+                        'width': 1920,
+                        'height': 1080,
+                        'quality_metrics': {'resolution': 2073600}
+                    },
+                    'text_content': 'presentation slide with speaker and audience',
+                    'conversation_id': 'conv_123',
+                    'metadata': {'original_path': '/uploads/slide.jpg'}
+                },
+                metadata=Mock(score=0.85)
+            ),
+            Mock(
+                uuid=uuid.uuid4(),
+                properties={
+                    'content_id': 'content_2',
+                    'media_type': 'video',
+                    'filename': 'conference_talk.mp4',
+                    'storage_path': '/media/videos/conference_talk.mp4',
+                    'file_size': 50000000,
+                    'content_hash': 'def456',
+                    'created_at': '2024-01-01T11:00:00Z',
+                    'updated_at': '2024-01-01T11:00:00Z',
+                    'processing_status': 'completed',
+                    'processing_result': {
+                        'video_duration': 300.0,
+                        'scenes': [
+                            {'scene_type': 'dialogue', 'start_time': 0.0, 'end_time': 150.0},
+                            {'scene_type': 'presentation', 'start_time': 150.0, 'end_time': 300.0}
+                        ],
+                        'total_key_frames': 15,
+                        'overall_video_quality': 0.9
+                    },
+                    'text_content': 'conference presentation video with speaker giving talk',
+                    'conversation_id': 'conv_123',
+                    'metadata': {'original_path': '/uploads/talk.mp4'}
+                },
+                metadata=Mock(score=0.78)
+            )
+        ]
+
+        # Mock the near_text query response
+        mock_response = Mock()
+        mock_response.objects = mock_multimodal_objects
+        collection.query.near_text.return_value = mock_response
+
+        # Create service
+        service = RetrievalService(client)
+
+        # Test multimodal search
+        query = "a person giving a speech"
+        config = MultiModalSearchConfig(
+            limit=10,
+            relevance_threshold=0.7,
+            media_types=[MediaType.IMAGE, MediaType.VIDEO],
+            conversation_id="conv_123"
+        )
+
+        result = service.search_multimodal_content(query, config)
+
+        # Verify the result
+        assert isinstance(result, MultiModalSearchResponse)
+        assert result.query == query
+        assert result.total_results == 2
+        assert len(result.results) == 2
+        assert result.cross_modal_accuracy > 0.0
+        assert result.search_time > 0.0
+
+        # Verify individual results
+        first_result = result.results[0]
+        assert isinstance(first_result, MultiModalResult)
+        assert first_result.content_id == 'content_1'
+        assert first_result.media_type == 'image'
+        assert first_result.filename == 'presentation_slide.jpg'
+        assert first_result.relevance_score == 0.85
+        assert first_result.cross_modal_score > 0.0
+
+        second_result = result.results[1]
+        assert second_result.content_id == 'content_2'
+        assert second_result.media_type == 'video'
+        assert second_result.filename == 'conference_talk.mp4'
+
+        # Verify Weaviate client was called correctly
+        collection.query.near_text.assert_called_once()
+        call_args = collection.query.near_text.call_args
+
+        # Check that nearText was called with correct parameters
+        assert 'query' in call_args.kwargs
+        assert call_args.kwargs['limit'] == 10
+        assert call_args.kwargs['offset'] == 0
+        assert 'where' in call_args.kwargs  # Filters should be applied
+        assert 'return_metadata' in call_args.kwargs
+
+        # Verify the query was processed (should contain original query)
+        processed_query = call_args.kwargs['query']
+        assert 'person' in processed_query.lower() or 'speech' in processed_query.lower()
+
+    def test_multimodal_search_with_filters(self, mock_weaviate_client):
+        """Test multimodal search with various filters."""
+        client, collection = mock_weaviate_client
+
+        # Mock empty response
+        mock_response = Mock()
+        mock_response.objects = []
+        collection.query.near_text.return_value = mock_response
+
+        service = RetrievalService(client)
+
+        # Test with media type filter
+        config = MultiModalSearchConfig(
+            media_types=[MediaType.VIDEO],
+            conversation_id="test_conv",
+            file_size_range=(1000000, 100000000)  # 1MB to 100MB
+        )
+
+        filters = {
+            'processing_status': 'completed'
+        }
+
+        result = service.search_multimodal_content(
+            "meeting discussion",
+            config,
+            filters
+        )
+
+        # Verify call was made
+        collection.query.near_text.assert_called_once()
+        call_args = collection.query.near_text.call_args
+
+        # Verify filters were applied
+        assert 'where' in call_args.kwargs
+        # The where filter should be constructed from our config and filters
+
+        # Verify empty result handling
+        assert isinstance(result, MultiModalSearchResponse)
+        assert len(result.results) == 0
+        assert result.total_results == 0
+
+    def test_multimodal_search_error_handling(self, mock_weaviate_client):
+        """Test multimodal search error handling."""
+        client, collection = mock_weaviate_client
+
+        service = RetrievalService(client)
+
+        # Test empty query
+        with pytest.raises(ValueError, match="Query cannot be empty"):
+            service.search_multimodal_content("")
+
+        # Test with None query
+        with pytest.raises(ValueError, match="Query cannot be empty"):
+            service.search_multimodal_content(None)
+
+        # Test without client
+        service_no_client = RetrievalService(None)
+        with pytest.raises(ValueError, match="Weaviate client not initialized"):
+            service_no_client.search_multimodal_content("test query")
+
+    def test_multimodal_search_configuration(self):
+        """Test multimodal search configuration."""
+        # Test default configuration
+        config = MultiModalSearchConfig()
+        assert config.limit == 10
+        assert config.relevance_threshold == 0.7
+        assert config.cross_modal_weight == 0.8
+        assert config.media_types is None
+
+        # Test custom configuration
+        custom_config = MultiModalSearchConfig(
+            limit=20,
+            relevance_threshold=0.8,
+            media_types=[MediaType.IMAGE],
+            conversation_id="test_123"
+        )
+
+        config_dict = custom_config.to_dict()
+        assert config_dict['limit'] == 20
+        assert config_dict['relevance_threshold'] == 0.8
+        assert config_dict['media_types'] == ['image']
+        assert config_dict['conversation_id'] == "test_123"

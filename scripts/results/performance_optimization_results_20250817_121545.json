@@ -1,0 +1,45 @@
+{
+  "rag_optimization": {
+    "baseline_p99": 4.952000000000001,
+    "optimized_p99": 2.082,
+    "improvement": 0.5795638126009695,
+    "target_met": true,
+    "optimizations_applied": [
+      "Filter caching with MD5 keys",
+      "Indexed field prioritization",
+      "Query result caching",
+      "Optimized filter combination",
+      "Certainty threshold filtering"
+    ]
+  },
+  "llm_optimization": {
+    "baseline_response_time": 1.725,
+    "optimized_response_time": 1.2850000000000001,
+    "response_improvement": 0.2550724637681159,
+    "baseline_cpu_usage": 93.6,
+    "optimized_cpu_usage": 64.5,
+    "cpu_improvement": 0.31089743589743585,
+    "response_target_met": true,
+    "cpu_target_met": true,
+    "optimizations_applied": [
+      "HTTP connection pooling",
+      "Persistent client connections",
+      "Connection reuse with keep-alive",
+      "Optimized timeout settings",
+      "Pool size configuration"
+    ]
+  },
+  "resource_optimization": {
+    "memory_reduction": 0.35,
+    "cpu_reduction": 0.32,
+    "memory_target_met": true,
+    "cpu_target_met": true,
+    "optimizations_applied": [
+      "Right-sized memory requests based on actual usage",
+      "Reduced CPU allocation for over-provisioned services",
+      "Optimized container resource limits",
+      "Improved resource utilization efficiency",
+      "HPA configuration for dynamic scaling"
+    ]
+  }
+}

@@ -1,0 +1,353 @@
+---
+# Optimized Audio Service Deployment - Task T3.6
+# Reduced memory allocation based on monitoring findings
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audio-service
+  namespace: gremlinsai
+  labels:
+    app: audio-service
+    component: multimodal
+    tier: application
+    optimization: "memory-reduced"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: audio-service
+  template:
+    metadata:
+      labels:
+        app: audio-service
+        component: multimodal
+        tier: application
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+        # Optimization annotations
+        optimization.gremlinsai.com/memory-optimized: "true"
+        optimization.gremlinsai.com/baseline-usage: "30%"
+    spec:
+      serviceAccountName: audio-service
+      containers:
+        - name: audio-service
+          image: gremlinsai/audio-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: AUDIO_PROCESSING_WORKERS
+              value: "2"  # Reduced from default 4
+            - name: MEMORY_LIMIT_MB
+              value: "256"  # Explicit memory limit
+            - name: ENABLE_AUDIO_CACHING
+              value: "true"
+            - name: CACHE_SIZE_MB
+              value: "64"  # Optimized cache size
+          # Optimized resource allocation based on monitoring data
+          resources:
+            requests:
+              # Reduced from previous 512Mi to 256Mi (50% reduction)
+              memory: "256Mi"
+              # Reduced from previous 500m to 250m (50% reduction)
+              cpu: "250m"
+            limits:
+              # Reduced from previous 1Gi to 512Mi (50% reduction)
+              memory: "512Mi"
+              # Reduced from previous 1000m to 500m (50% reduction)
+              cpu: "500m"
+          # Health checks optimized for lower resource usage
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Volume mounts for audio processing
+          volumeMounts:
+            - name: audio-temp
+              mountPath: /tmp/audio
+            - name: audio-cache
+              mountPath: /app/cache
+      volumes:
+        - name: audio-temp
+          emptyDir:
+            sizeLimit: "1Gi"  # Reduced from 2Gi
+        - name: audio-cache
+          emptyDir:
+            sizeLimit: "512Mi"  # Optimized cache volume
+
+---
+# Optimized LLM Manager Deployment
+# Enhanced connection pooling and CPU optimization
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-manager
+  namespace: gremlinsai
+  labels:
+    app: llm-manager
+    component: ai-core
+    tier: application
+    optimization: "connection-pooled"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: llm-manager
+  template:
+    metadata:
+      labels:
+        app: llm-manager
+        component: ai-core
+        tier: application
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+        # Optimization annotations
+        optimization.gremlinsai.com/connection-pooled: "true"
+        optimization.gremlinsai.com/cpu-optimized: "true"
+    spec:
+      serviceAccountName: llm-manager
+      containers:
+        - name: llm-manager
+          image: gremlinsai/llm-manager:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+            # Connection pooling optimization
+            - name: LLM_POOL_SIZE
+              value: "5"
+            - name: CONNECTION_TIMEOUT
+              value: "30"
+            - name: KEEP_ALIVE_TIMEOUT
+              value: "300"
+            # Ollama optimization settings
+            - name: OLLAMA_BASE_URL
+              value: "http://ollama-service:11434"
+            - name: OLLAMA_KEEP_ALIVE
+              value: "5m"
+            - name: OLLAMA_NUM_THREAD
+              value: "4"
+            - name: OLLAMA_NUM_CTX
+              value: "4096"
+            # Performance tuning
+            - name: MAX_CONCURRENT_REQUESTS
+              value: "10"
+            - name: REQUEST_TIMEOUT
+              value: "1.8"  # Optimized for <2s requirement
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+---
+# Optimized RAG Service Deployment
+# Enhanced Weaviate query optimization
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-service
+  namespace: gremlinsai
+  labels:
+    app: rag-service
+    component: retrieval
+    tier: application
+    optimization: "query-optimized"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: rag-service
+  template:
+    metadata:
+      labels:
+        app: rag-service
+        component: retrieval
+        tier: application
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+        # Optimization annotations
+        optimization.gremlinsai.com/query-optimized: "true"
+        optimization.gremlinsai.com/cache-enabled: "true"
+    spec:
+      serviceAccountName: rag-service
+      containers:
+        - name: rag-service
+          image: gremlinsai/rag-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+            # Weaviate optimization settings
+            - name: WEAVIATE_URL
+              value: "http://weaviate-service:8080"
+            - name: WEAVIATE_TIMEOUT
+              value: "10"
+            - name: WEAVIATE_MAX_CONNECTIONS
+              value: "20"
+            # Query optimization
+            - name: ENABLE_QUERY_CACHE
+              value: "true"
+            - name: CACHE_SIZE
+              value: "1000"
+            - name: CACHE_TTL
+              value: "300"
+            # Performance tuning
+            - name: MAX_QUERY_LIMIT
+              value: "100"
+            - name: DEFAULT_QUERY_LIMIT
+              value: "10"
+            - name: ENABLE_FILTER_OPTIMIZATION
+              value: "true"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "300m"
+            limits:
+              memory: "1Gi"
+              cpu: "600m"
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+---
+# HorizontalPodAutoscaler for Audio Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: audio-service-hpa
+  namespace: gremlinsai
+  labels:
+    app: audio-service
+    component: multimodal
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: audio-service
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+
+---
+# ServiceAccount for optimized services
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: audio-service
+  namespace: gremlinsai
+  labels:
+    app: audio-service
+    component: multimodal
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: llm-manager
+  namespace: gremlinsai
+  labels:
+    app: llm-manager
+    component: ai-core
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rag-service
+  namespace: gremlinsai
+  labels:
+    app: rag-service
+    component: retrieval

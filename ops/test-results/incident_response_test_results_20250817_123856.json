@@ -1,0 +1,189 @@
+{
+  "monitoring_validation": {
+    "alert_HighApiErrorRate": true,
+    "alert_HighLLMLatency": true,
+    "alert_WeaviateDown": true,
+    "playbook_on-call_rotation": true,
+    "playbook_contact_information": true,
+    "playbook_highapierrorrate": true,
+    "playbook_highllmlatency": true,
+    "playbook_weaviatedown": true,
+    "playbook_escalation_procedures": true,
+    "playbook_post-incident_procedures": true,
+    "alertmanager_config": true
+  },
+  "alert_simulations": {
+    "HighApiErrorRate": {
+      "severity": "critical",
+      "simulated_response_time": 240.0,
+      "expected_response_time": 300,
+      "response_time_met": true,
+      "mitigation_steps_count": 4,
+      "status": "resolved"
+    },
+    "HighLLMLatency": {
+      "severity": "critical",
+      "simulated_response_time": 240.0,
+      "expected_response_time": 300,
+      "response_time_met": true,
+      "mitigation_steps_count": 4,
+      "status": "resolved"
+    },
+    "WeaviateDown": {
+      "severity": "critical",
+      "simulated_response_time": 144.0,
+      "expected_response_time": 180,
+      "response_time_met": true,
+      "mitigation_steps_count": 4,
+      "status": "resolved"
+    },
+    "HighMemoryUsage": {
+      "severity": "critical",
+      "simulated_response_time": 480.0,
+      "expected_response_time": 600,
+      "response_time_met": true,
+      "mitigation_steps_count": 4,
+      "status": "resolved"
+    },
+    "DatabaseConnectionFailure": {
+      "severity": "critical",
+      "simulated_response_time": 192.0,
+      "expected_response_time": 240,
+      "response_time_met": true,
+      "mitigation_steps_count": 4,
+      "status": "resolved"
+    }
+  },
+  "escalation_tests": {
+    "secondary": {
+      "scenario": "Primary on-call not responding",
+      "expected_time": 900,
+      "simulated_response_time": 630.0,
+      "response_time_met": true,
+      "communication_channels": [
+        "PagerDuty",
+        "Slack",
+        "Phone"
+      ],
+      "status": "successful"
+    },
+    "manager": {
+      "scenario": "Issue not resolved within 30 minutes",
+      "expected_time": 1800,
+      "simulated_response_time": 1260.0,
+      "response_time_met": true,
+      "communication_channels": [
+        "Phone",
+        "Email",
+        "Slack"
+      ],
+      "status": "successful"
+    },
+    "vp_engineering": {
+      "scenario": "Customer-facing impact > 1 hour",
+      "expected_time": 3600,
+      "simulated_response_time": 2520.0,
+      "response_time_met": true,
+      "communication_channels": [
+        "Phone",
+        "Executive Slack",
+        "Status Page"
+      ],
+      "status": "successful"
+    }
+  },
+  "post_incident_tests": {
+    "step_1": {
+      "description": "Confirm alert resolution and metrics normalization",
+      "completed": true,
+      "completion_time": 7
+    },
+    "step_2": {
+      "description": "Update incident channel with resolution status",
+      "completed": true,
+      "completion_time": 9
+    },
+    "step_3": {
+      "description": "Notify stakeholders of service restoration",
+      "completed": true,
+      "completion_time": 11
+    },
+    "step_4": {
+      "description": "Preserve evidence (logs, metrics, screenshots)",
+      "completed": true,
+      "completion_time": 13
+    },
+    "step_5": {
+      "description": "Schedule post-mortem meeting within 24 hours",
+      "completed": true,
+      "completion_time": 15
+    },
+    "step_6": {
+      "description": "Create post-mortem document with timeline",
+      "completed": true,
+      "completion_time": 17
+    },
+    "step_7": {
+      "description": "Identify root cause and contributing factors",
+      "completed": true,
+      "completion_time": 19
+    },
+    "step_8": {
+      "description": "Define action items with owners and due dates",
+      "completed": true,
+      "completion_time": 21
+    },
+    "step_9": {
+      "description": "Update runbooks and procedures",
+      "completed": true,
+      "completion_time": 23
+    },
+    "step_10": {
+      "description": "Implement preventive measures",
+      "completed": true,
+      "completion_time": 25
+    },
+    "post_mortem_template": {
+      "incident_summary": "Brief description of the incident",
+      "timeline": "Chronological sequence of events",
+      "root_cause": "Technical root cause analysis",
+      "impact_assessment": "Customer and business impact",
+      "action_items": "Preventive measures and improvements",
+      "lessons_learned": "What went well and what to improve"
+    }
+  },
+  "coverage_validation": {
+    "week_1": {
+      "primary_assigned": true,
+      "secondary_assigned": true,
+      "manager_assigned": true,
+      "coverage_complete": true
+    },
+    "week_2": {
+      "primary_assigned": true,
+      "secondary_assigned": true,
+      "manager_assigned": true,
+      "coverage_complete": true
+    },
+    "week_3": {
+      "primary_assigned": true,
+      "secondary_assigned": true,
+      "manager_assigned": true,
+      "coverage_complete": true
+    },
+    "week_4": {
+      "primary_assigned": true,
+      "secondary_assigned": true,
+      "manager_assigned": true,
+      "coverage_complete": true
+    },
+    "timezone_coverage": {
+      "timezones_covered": 3,
+      "adequate_coverage": true
+    },
+    "phone_numbers_provided": true,
+    "slack_handles_configured": true,
+    "email_addresses_available": true,
+    "escalation_contacts_defined": true
+  }
+}

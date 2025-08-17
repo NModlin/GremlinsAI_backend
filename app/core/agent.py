@@ -28,6 +28,7 @@ import operator
 from app.core.tools import duckduckgo_search, sanitize_input
 from app.core.llm_manager import ProductionLLMManager, ConversationContext
 from app.core.context_store import get_context_store
+from app.monitoring.metrics import metrics
 from app.core.memory_manager import MemoryManager
 from app.tools import get_tool_registry
 
@@ -197,13 +198,26 @@ User: {{user_query}}"""
 
     def _search_tool(self, query: str) -> str:
         """Execute search tool."""
+        import time
+        start_time = time.time()
+        success = True
+
         try:
             sanitized_query = sanitize_input(query)
             result = duckduckgo_search(sanitized_query)
             return f"Search results: {result}"
         except Exception as e:
             logger.error(f"Search tool error: {e}")
+            success = False
             return f"Search failed: {str(e)}"
+        finally:
+            duration = time.time() - start_time
+            metrics.record_tool_usage(
+                agent_type="production_agent",
+                tool_name="search",
+                duration=duration,
+                success=success
+            )
 
     def _final_answer_tool(self, answer: str) -> str:
         """Provide final answer."""
@@ -463,6 +477,13 @@ User: {{user_query}}"""
                             # Save updated context with memory
                             self._save_conversation_context(context)
 
+                        # Record successful agent query metrics
+                        metrics.record_agent_query(
+                            agent_type="production_agent",
+                            reasoning_steps=step_num,
+                            success=True
+                        )
+
                         return AgentResult(
                             final_answer=final_answer,
                             reasoning_steps=reasoning_steps,
@@ -495,6 +516,13 @@ User: {{user_query}}"""
                 # Save updated context with memory
                 self._save_conversation_context(context)
 
+            # Record failed agent query metrics
+            metrics.record_agent_query(
+                agent_type="production_agent",
+                reasoning_steps=len(reasoning_steps),
+                success=False
+            )
+
             return AgentResult(
                 final_answer="I apologize, but I couldn't complete the task within the maximum number of reasoning steps.",
                 reasoning_steps=reasoning_steps,
@@ -506,6 +534,13 @@ User: {{user_query}}"""
         except Exception as e:
             error_msg = f"Agent execution error: {str(e)}"
             logger.error(error_msg, exc_info=True)
+
+            # Record failed agent query metrics
+            metrics.record_agent_query(
+                agent_type="production_agent",
+                reasoning_steps=len(reasoning_steps),
+                success=False
+            )
 
             return AgentResult(
                 final_answer=f"I apologize, but an error occurred while processing your request: {str(e)}",

@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal, health, oauth
+from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal, health, oauth, metrics
 from app.api.v1.websocket import endpoints as websocket_endpoints
 from app.database.database import ensure_data_directory
 from app.core.exceptions import GremlinsAIException
@@ -17,6 +17,7 @@ from app.core.error_handlers import (
     sqlalchemy_exception_handler,
     general_exception_handler
 )
+from app.middleware.monitoring import PrometheusMiddleware
 
 
 @asynccontextmanager
@@ -50,6 +51,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Add Prometheus monitoring middleware
+app.add_middleware(PrometheusMiddleware)
 
 # Add security headers middleware
 @app.middleware("http")
@@ -86,6 +90,7 @@ app.include_router(developer_portal.router, prefix="/developer-portal", tags=["D
 app.include_router(multimodal.router, prefix="/api/v1/multimodal", tags=["Multi-Modal"])
 app.include_router(health.router, prefix="/api/v1/health", tags=["Health & Monitoring"])
 app.include_router(oauth.router, prefix="/api/v1/oauth", tags=["OAuth Authentication"])
+app.include_router(metrics.router, prefix="/api/v1", tags=["Monitoring"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
