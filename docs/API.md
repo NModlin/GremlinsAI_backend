@@ -1,8 +1,12 @@
-# gremlinsAI API Documentation
+# gremlinsAI API Documentation v10.0.0
 
 ## Overview
 
-The gremlinsAI API provides a comprehensive interface for interacting with AI agents and managing conversation history. The API is built with FastAPI and follows RESTful principles.
+The gremlinsAI API provides a comprehensive interface for interacting with AI agents, managing conversation history, processing multi-modal content, real-time collaboration, analytics, and local LLM optimization. The API is built with FastAPI and follows RESTful principles.
+
+**Version:** 10.0.0
+**Total Endpoints:** 120+
+**Supported Protocols:** REST, GraphQL, WebSocket
 
 ## Base URL
 
@@ -12,7 +16,24 @@ http://localhost:8000
 
 ## Authentication
 
-Currently, no authentication is required. Future versions will include API key authentication.
+The API supports multiple authentication methods:
+
+### API Key Authentication (Recommended)
+```http
+Authorization: Bearer YOUR_API_KEY
+```
+
+### OAuth 2.0 (Google)
+```http
+Authorization: Bearer OAUTH_ACCESS_TOKEN
+```
+
+### Generate API Key
+```bash
+curl -X POST "http://localhost:8000/api/v1/auth/api-keys" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My App", "permissions": ["read", "write"]}'
+```
 
 ## API Endpoints
 
