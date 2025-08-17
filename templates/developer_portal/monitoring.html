@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome for icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- Chart.js for metrics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        .sidebar {
+            background-color: #f8f9fa;
+            min-height: 100vh;
+        }
+        .nav-link {
+            color: #495057;
+            padding: 0.75rem 1rem;
+            border-radius: 0.375rem;
+            margin-bottom: 0.25rem;
+        }
+        .nav-link:hover, .nav-link.active {
+            background-color: #e9ecef;
+            color: #495057;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 0.5rem;
+        }
+        .status-healthy { background-color: #28a745; }
+        .status-warning { background-color: #ffc107; }
+        .status-error { background-color: #dc3545; }
+        .metric-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .real-time-data {
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/developer-portal/">
+                <i class="fas fa-robot me-2"></i>
+                gremlinsAI Developer Portal
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/docs/">Documentation</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/docs/api-reference">API Reference</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/graphql">GraphQL</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-3 col-lg-2 sidebar p-3">
+                <nav class="nav flex-column">
+                    <a class="nav-link" href="/developer-portal/">
+                        <i class="fas fa-tachometer-alt me-2"></i>
+                        Dashboard
+                    </a>
+                    <a class="nav-link" href="/developer-portal/api-explorer">
+                        <i class="fas fa-search me-2"></i>
+                        API Explorer
+                    </a>
+                    <a class="nav-link active" href="/developer-portal/monitoring">
+                        <i class="fas fa-chart-line me-2"></i>
+                        Monitoring
+                    </a>
+                    <a class="nav-link" href="/developer-portal/tools">
+                        <i class="fas fa-tools me-2"></i>
+                        Developer Tools
+                    </a>
+                    <a class="nav-link" href="/developer-portal/metrics">
+                        <i class="fas fa-chart-bar me-2"></i>
+                        Metrics
+                    </a>
+                </nav>
+            </div>
+
+            <!-- Main Content -->
+            <div class="col-md-9 col-lg-10 p-4">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1 class="h3">
+                        <i class="fas fa-chart-line me-2"></i>
+                        System Monitoring
+                    </h1>
+                    <div class="d-flex align-items-center">
+                        <span class="status-indicator status-healthy"></span>
+                        <span class="me-3">System Healthy</span>
+                        <button class="btn btn-sm btn-outline-primary" onclick="refreshData()">
+                            <i class="fas fa-sync-alt me-1"></i>
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Real-time Metrics -->
+                <div class="row mb-4">
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="h4" id="cpuUsage">--</div>
+                            <div class="small">CPU Usage</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="h4" id="memoryUsage">--</div>
+                            <div class="small">Memory Usage</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="h4" id="activeConnections">--</div>
+                            <div class="small">Active Connections</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="metric-card">
+                            <div class="h4" id="responseTime">--</div>
+                            <div class="small">Avg Response Time</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts -->
+                <div class="row mb-4">
+                    <div class="col-md-8">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">API Response Times</h5>
+                            </div>
+                            <div class="card-body">
+                                <canvas id="responseTimeChart" height="100"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">Request Distribution</h5>
+                            </div>
+                            <div class="card-body">
+                                <canvas id="requestDistChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Service Status -->
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">Service Status</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span><span class="status-indicator status-healthy"></span>FastAPI Backend</span>
+                                    <span class="badge bg-success">Healthy</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span><span class="status-indicator status-healthy"></span>Redis Cache</span>
+                                    <span class="badge bg-success">Connected</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span><span class="status-indicator status-healthy"></span>Qdrant Vector DB</span>
+                                    <span class="badge bg-success">Operational</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span><span class="status-indicator status-healthy"></span>Ollama LLM</span>
+                                    <span class="badge bg-success">Available</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span><span class="status-indicator status-warning"></span>GraphQL API</span>
+                                    <span class="badge bg-success">Operational</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">Real-time Logs</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="logContainer" class="real-time-data" style="height: 200px; overflow-y: auto; background-color: #f8f9fa; padding: 0.5rem; border-radius: 0.375rem;">
+                                    <div class="text-muted">Connecting to log stream...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Performance Metrics -->
+                <div class="row">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">Performance Metrics</h5>
+                            </div>
+                            <div class="card-body">
+                                <canvas id="performanceChart" height="80"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // Initialize charts
+        const responseTimeCtx = document.getElementById('responseTimeChart').getContext('2d');
+        const responseTimeChart = new Chart(responseTimeCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Response Time (ms)',
+                    data: [],
+                    borderColor: 'rgb(75, 192, 192)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        const requestDistCtx = document.getElementById('requestDistChart').getContext('2d');
+        const requestDistChart = new Chart(requestDistCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['GET', 'POST', 'PUT', 'DELETE'],
+                datasets: [{
+                    data: [45, 35, 15, 5],
+                    backgroundColor: [
+                        '#28a745',
+                        '#007bff',
+                        '#ffc107',
+                        '#dc3545'
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true
+            }
+        });
+
+        const performanceCtx = document.getElementById('performanceChart').getContext('2d');
+        const performanceChart = new Chart(performanceCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'CPU Usage (%)',
+                        data: [],
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Memory Usage (%)',
+                        data: [],
+                        borderColor: 'rgb(54, 162, 235)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100
+                    }
+                }
+            }
+        });
+
+        // Simulate real-time data updates
+        function updateMetrics() {
+            // Update metric cards
+            document.getElementById('cpuUsage').textContent = Math.floor(Math.random() * 30 + 10) + '%';
+            document.getElementById('memoryUsage').textContent = Math.floor(Math.random() * 40 + 30) + '%';
+            document.getElementById('activeConnections').textContent = Math.floor(Math.random() * 50 + 10);
+            document.getElementById('responseTime').textContent = Math.floor(Math.random() * 100 + 50) + 'ms';
+
+            // Update charts
+            const now = new Date().toLocaleTimeString();
+            
+            // Response time chart
+            responseTimeChart.data.labels.push(now);
+            responseTimeChart.data.datasets[0].data.push(Math.floor(Math.random() * 200 + 50));
+            
+            if (responseTimeChart.data.labels.length > 20) {
+                responseTimeChart.data.labels.shift();
+                responseTimeChart.data.datasets[0].data.shift();
+            }
+            responseTimeChart.update('none');
+
+            // Performance chart
+            performanceChart.data.labels.push(now);
+            performanceChart.data.datasets[0].data.push(Math.floor(Math.random() * 30 + 10));
+            performanceChart.data.datasets[1].data.push(Math.floor(Math.random() * 40 + 30));
+            
+            if (performanceChart.data.labels.length > 20) {
+                performanceChart.data.labels.shift();
+                performanceChart.data.datasets[0].data.shift();
+                performanceChart.data.datasets[1].data.shift();
+            }
+            performanceChart.update('none');
+        }
+
+        // Simulate log updates
+        function updateLogs() {
+            const logContainer = document.getElementById('logContainer');
+            const timestamp = new Date().toISOString();
+            const logTypes = ['INFO', 'DEBUG', 'WARNING'];
+            const logType = logTypes[Math.floor(Math.random() * logTypes.length)];
+            const messages = [
+                'API request processed successfully',
+                'Database connection established',
+                'Cache hit for user session',
+                'Background task completed',
+                'WebSocket connection opened',
+                'Document indexed successfully'
+            ];
+            const message = messages[Math.floor(Math.random() * messages.length)];
+            
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span class="text-muted">${timestamp}</span> <span class="badge bg-primary">${logType}</span> ${message}`;
+            
+            logContainer.appendChild(logEntry);
+            
+            // Keep only last 10 log entries
+            while (logContainer.children.length > 10) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+            
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function refreshData() {
+            updateMetrics();
+            updateLogs();
+        }
+
+        // Start real-time updates
+        setInterval(updateMetrics, {{ refresh_interval if refresh_interval else 5000 }});
+        setInterval(updateLogs, 3000);
+
+        // Initial load
+        updateMetrics();
+        updateLogs();
+    </script>
+</body>
+</html>

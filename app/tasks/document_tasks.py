@@ -7,14 +7,12 @@ import asyncio
 import logging
 import time
 from typing import Dict, Any, List, Optional
-from app.core.celery_app import task
+from celery import current_app as celery_app
 from app.database.database import AsyncSessionLocal
-from app.services.document_service import DocumentService
-from app.core.rag_system import rag_system
 
 logger = logging.getLogger(__name__)
 
-@task(bind=True, name="document_tasks.process_document_batch")
+@celery_app.task(bind=True, name="document_tasks.process_document_batch")
 def process_document_batch_task(self, document_data_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Asynchronously process a batch of documents.
@@ -55,7 +53,9 @@ def process_document_batch_task(self, document_data_list: List[Dict[str, Any]]) 
 
 async def _process_document_batch(document_data_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Process a batch of documents asynchronously."""
-    
+    # Lazy imports to avoid circular dependencies
+    from app.services.document_service import DocumentService
+
     async with AsyncSessionLocal() as db:
         results = []
         successful = 0
@@ -100,7 +100,7 @@ async def _process_document_batch(document_data_list: List[Dict[str, Any]]) -> D
             "status": "completed"
         }
 
-@task(bind=True, name="document_tasks.rebuild_vector_index")
+@celery_app.task(bind=True, name="document_tasks.rebuild_vector_index")
 def rebuild_vector_index_task(self, collection_name: Optional[str] = None) -> Dict[str, Any]:
     """
     Asynchronously rebuild the vector index for documents.
@@ -190,7 +190,7 @@ async def _rebuild_vector_index(collection_name: Optional[str]) -> Dict[str, Any
             logger.error(f"Vector index rebuild failed: {str(e)}")
             raise
 
-@task(bind=True, name="document_tasks.run_complex_rag_query")
+@celery_app.task(bind=True, name="document_tasks.run_complex_rag_query")
 def run_complex_rag_query_task(self, query: str, search_limit: int = 5,
                               use_multi_agent: bool = False,
                               conversation_id: Optional[str] = None,
@@ -309,7 +309,7 @@ async def _execute_complex_rag_query(query: str, search_limit: int,
             logger.error(f"Complex RAG query execution failed: {str(e)}")
             raise
 
-@task(bind=True, name="document_tasks.analyze_document_collection")
+@celery_app.task(bind=True, name="document_tasks.analyze_document_collection")
 def analyze_document_collection_task(self, analysis_type: str = "summary") -> Dict[str, Any]:
     """
     Asynchronously analyze the entire document collection.

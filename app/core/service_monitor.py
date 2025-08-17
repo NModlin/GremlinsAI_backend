@@ -70,7 +70,9 @@ class ServiceMonitor:
         self._last_check[service_type] = datetime.now()
         
         if not is_available:
-            logger.warning(
+            # Use info level for optional services in development to reduce noise
+            log_level = logger.info if service_type in [ServiceType.OPENAI_API, ServiceType.QDRANT] else logger.warning
+            log_level(
                 f"Service {service_type.value} is {status}",
                 extra={
                     "service": service_type.value,
@@ -215,16 +217,23 @@ service_monitor = ServiceMonitor()
 def check_openai_availability() -> ServiceStatus:
     """Check OpenAI API availability and register status."""
     try:
-        # This would normally make a test API call
-        # For now, we'll check if API key is configured
+        # Check if API key is configured
         import os
+        from app.core.config import settings
+
         api_key = os.getenv("OPENAI_API_KEY")
         is_available = bool(api_key)
-        
+
+        # For local development, don't warn if OpenAI is not configured
+        # since we're using local LLMs (Ollama)
+        if not is_available and not settings.debug:
+            # Only log info in development mode, not warning
+            logger.info("OpenAI API not configured - using local LLM fallback")
+
         return service_monitor.register_service_status(
             ServiceType.OPENAI_API,
             is_available=is_available,
-            capabilities_affected=["gpt_analysis", "advanced_reasoning", "multi_agent_collaboration"],
+            capabilities_affected=["gpt_analysis", "advanced_reasoning", "multi_agent_collaboration"] if not is_available else [],
             fallback_available=True
         )
     except Exception as e:
@@ -241,16 +250,23 @@ def check_qdrant_availability() -> ServiceStatus:
     """Check Qdrant availability and register status."""
     try:
         from app.core.vector_store import vector_store
+        from app.core.config import settings
+
         is_available = vector_store.is_connected
-        
+
+        # For local development, don't warn if Qdrant is not running
+        # since it's an optional enhancement service
+        if not is_available:
+            logger.info("Qdrant vector database not available - basic document search will be used as fallback")
+
         return service_monitor.register_service_status(
             ServiceType.QDRANT,
             is_available=is_available,
-            capabilities_affected=["semantic_search", "document_similarity", "rag_enhancement"],
+            capabilities_affected=["semantic_search", "document_similarity", "rag_enhancement"] if not is_available else [],
             fallback_available=True
         )
     except Exception as e:
-        logger.error(f"Failed to check Qdrant availability: {e}")
+        logger.info(f"Qdrant not available: {e} - using fallback document search")
         return service_monitor.register_service_status(
             ServiceType.QDRANT,
             is_available=False,
@@ -291,11 +307,32 @@ def check_multimodal_dependencies() -> List[ServiceStatus]:
         fallback_available=False
     ))
     
-    # Check FFmpeg availability
+    # Check FFmpeg availability (binary, not Python package)
     try:
-        import ffmpeg
-        ffmpeg_available = True
-    except ImportError:
+        import subprocess
+        import shutil
+
+        # First check if ffmpeg binary is in PATH
+        ffmpeg_path = shutil.which("ffmpeg")
+        if ffmpeg_path:
+            # Test if ffmpeg actually works
+            result = subprocess.run(
+                ["ffmpeg", "-version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            ffmpeg_available = result.returncode == 0
+        else:
+            ffmpeg_available = False
+
+        if ffmpeg_available:
+            logger.info(f"FFmpeg found at: {ffmpeg_path}")
+        else:
+            logger.info("FFmpeg binary not found in PATH")
+
+    except Exception as e:
+        logger.info(f"FFmpeg check failed: {e}")
         ffmpeg_available = False
     
     statuses.append(service_monitor.register_service_status(

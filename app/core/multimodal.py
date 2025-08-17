@@ -72,13 +72,36 @@ class MultiModalProcessor:
             capabilities['text_to_speech'] = False
             logger.warning("Text-to-speech not available - install pyttsx3")
         
-        # Check video capabilities
+        # Check video capabilities (requires both FFmpeg binary and OpenCV)
         try:
-            import ffmpeg
-            capabilities['video_processing'] = CV2_AVAILABLE  # Requires both ffmpeg and opencv
-        except ImportError:
+            import subprocess
+            import shutil
+
+            # Check if ffmpeg binary is available
+            ffmpeg_path = shutil.which("ffmpeg")
+            ffmpeg_available = False
+            if ffmpeg_path:
+                try:
+                    result = subprocess.run(
+                        ["ffmpeg", "-version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    ffmpeg_available = result.returncode == 0
+                except Exception:
+                    ffmpeg_available = False
+
+            capabilities['video_processing'] = CV2_AVAILABLE and ffmpeg_available
+
+            if not ffmpeg_available:
+                logger.warning("Video processing limited - FFmpeg binary not found in PATH")
+            elif not CV2_AVAILABLE:
+                logger.warning("Video processing limited - OpenCV not available")
+
+        except Exception as e:
             capabilities['video_processing'] = False
-            logger.warning("Video processing not available - install ffmpeg-python and opencv-python")
+            logger.warning(f"Video processing check failed: {e}")
         
         # Check image capabilities
         try:
@@ -300,12 +323,30 @@ class VideoProcessor:
         self.ffmpeg_available = self._check_ffmpeg()
     
     def _check_ffmpeg(self) -> bool:
-        """Check if ffmpeg is available."""
+        """Check if ffmpeg binary is available."""
         try:
-            import ffmpeg
-            return True
-        except ImportError:
-            logger.warning("ffmpeg-python not available - video processing limited")
+            import subprocess
+            import shutil
+
+            # Check if ffmpeg binary is in PATH
+            ffmpeg_path = shutil.which("ffmpeg")
+            if ffmpeg_path:
+                # Test if ffmpeg actually works
+                result = subprocess.run(
+                    ["ffmpeg", "-version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    logger.info(f"FFmpeg binary found at: {ffmpeg_path}")
+                    return True
+
+            logger.warning("FFmpeg binary not found in PATH - video processing limited")
+            return False
+
+        except Exception as e:
+            logger.warning(f"FFmpeg check failed: {e} - video processing limited")
             return False
     
     async def process_video(self, video_data: bytes, 

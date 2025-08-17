@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome for icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <style>
+        .sidebar {
+            background-color: #f8f9fa;
+            min-height: 100vh;
+        }
+        .nav-link {
+            color: #495057;
+            padding: 0.75rem 1rem;
+            border-radius: 0.375rem;
+            margin-bottom: 0.25rem;
+        }
+        .nav-link:hover, .nav-link.active {
+            background-color: #e9ecef;
+            color: #495057;
+        }
+        .tool-card {
+            transition: all 0.3s ease;
+            border: 1px solid #dee2e6;
+        }
+        .tool-card:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+        .tool-icon {
+            font-size: 2.5rem;
+            color: #007bff;
+            margin-bottom: 1rem;
+        }
+        .code-output {
+            background-color: #f8f9fa;
+            border-radius: 0.375rem;
+            padding: 1rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/developer-portal/">
+                <i class="fas fa-robot me-2"></i>
+                gremlinsAI Developer Portal
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/docs/">Documentation</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/docs/api-reference">API Reference</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/graphql">GraphQL</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-3 col-lg-2 sidebar p-3">
+                <nav class="nav flex-column">
+                    <a class="nav-link" href="/developer-portal/">
+                        <i class="fas fa-tachometer-alt me-2"></i>
+                        Dashboard
+                    </a>
+                    <a class="nav-link" href="/developer-portal/api-explorer">
+                        <i class="fas fa-search me-2"></i>
+                        API Explorer
+                    </a>
+                    <a class="nav-link" href="/developer-portal/monitoring">
+                        <i class="fas fa-chart-line me-2"></i>
+                        Monitoring
+                    </a>
+                    <a class="nav-link active" href="/developer-portal/tools">
+                        <i class="fas fa-tools me-2"></i>
+                        Developer Tools
+                    </a>
+                    <a class="nav-link" href="/developer-portal/metrics">
+                        <i class="fas fa-chart-bar me-2"></i>
+                        Metrics
+                    </a>
+                </nav>
+            </div>
+
+            <!-- Main Content -->
+            <div class="col-md-9 col-lg-10 p-4">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1 class="h3">
+                        <i class="fas fa-tools me-2"></i>
+                        Developer Tools
+                    </h1>
+                    <div class="text-muted">
+                        Utilities and tools for development
+                    </div>
+                </div>
+
+                <!-- Tools Grid -->
+                <div class="row mb-4">
+                    {% if tools %}
+                        {% for tool in tools %}
+                        <div class="col-md-6 col-lg-4 mb-4">
+                            <div class="card tool-card h-100">
+                                <div class="card-body text-center">
+                                    <div class="tool-icon">
+                                        <i class="{{ tool.icon }}"></i>
+                                    </div>
+                                    <h5 class="card-title">{{ tool.name }}</h5>
+                                    <p class="card-text text-muted">{{ tool.description }}</p>
+                                    <button class="btn btn-primary" onclick="openTool('{{ tool.name }}')">
+                                        <i class="fas fa-external-link-alt me-1"></i>
+                                        Open Tool
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% endif %}
+                </div>
+
+                <!-- API Key Generator Tool -->
+                <div id="apiKeyTool" class="card mb-4" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-key me-2"></i>
+                            API Key Generator
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted">Generate API keys for authentication with the gremlinsAI API.</p>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="keyName" class="form-label">Key Name</label>
+                                    <input type="text" class="form-control" id="keyName" placeholder="My Development Key">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="keyExpiry" class="form-label">Expiry</label>
+                                    <select class="form-select" id="keyExpiry">
+                                        <option value="30">30 days</option>
+                                        <option value="90">90 days</option>
+                                        <option value="365">1 year</option>
+                                        <option value="0">Never expires</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Permissions</label>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="readPerm" checked>
+                                        <label class="form-check-label" for="readPerm">Read</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="writePerm" checked>
+                                        <label class="form-check-label" for="writePerm">Write</label>
+                                    </div>
+                                </div>
+                                <button class="btn btn-primary" onclick="generateApiKey()">
+                                    <i class="fas fa-key me-1"></i>
+                                    Generate API Key
+                                </button>
+                            </div>
+                            <div class="col-md-6">
+                                <div id="apiKeyOutput" class="code-output">
+                                    Generated API key will appear here...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Schema Validator Tool -->
+                <div id="schemaValidatorTool" class="card mb-4" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-check-circle me-2"></i>
+                            Schema Validator
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted">Validate JSON schemas for API requests and responses.</p>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="schemaInput" class="form-label">JSON Schema</label>
+                                    <textarea class="form-control" id="schemaInput" rows="10" placeholder='{"type": "object", "properties": {"name": {"type": "string"}}}'></textarea>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="dataInput" class="form-label">Data to Validate</label>
+                                    <textarea class="form-control" id="dataInput" rows="5" placeholder='{"name": "John Doe"}'></textarea>
+                                </div>
+                                <button class="btn btn-primary" onclick="validateSchema()">
+                                    <i class="fas fa-check me-1"></i>
+                                    Validate
+                                </button>
+                            </div>
+                            <div class="col-md-6">
+                                <div id="validationOutput" class="code-output">
+                                    Validation results will appear here...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Rate Limit Tester Tool -->
+                <div id="rateLimitTool" class="card mb-4" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-tachometer-alt me-2"></i>
+                            Rate Limit Tester
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted">Test API rate limiting behavior by sending multiple requests.</p>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="testEndpoint" class="form-label">Endpoint to Test</label>
+                                    <input type="text" class="form-control" id="testEndpoint" value="/api/v1/health/health/quick">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="requestCount" class="form-label">Number of Requests</label>
+                                    <input type="number" class="form-control" id="requestCount" value="10" min="1" max="100">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="requestInterval" class="form-label">Interval (ms)</label>
+                                    <input type="number" class="form-control" id="requestInterval" value="100" min="10">
+                                </div>
+                                <button class="btn btn-primary" onclick="testRateLimit()" id="rateLimitBtn">
+                                    <i class="fas fa-play me-1"></i>
+                                    Start Test
+                                </button>
+                            </div>
+                            <div class="col-md-6">
+                                <div id="rateLimitOutput" class="code-output">
+                                    Rate limit test results will appear here...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- WebSocket Debugger Tool -->
+                <div id="websocketTool" class="card mb-4" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-bug me-2"></i>
+                            WebSocket Debugger
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted">Debug WebSocket connections and test real-time communication.</p>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="wsUrl" class="form-label">WebSocket URL</label>
+                                    <input type="text" class="form-control" id="wsUrl" value="ws://localhost:8001/api/v1/ws/ws">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="wsMessage" class="form-label">Message to Send</label>
+                                    <textarea class="form-control" id="wsMessage" rows="3" placeholder='{"type": "ping", "data": "hello"}'></textarea>
+                                </div>
+                                <div class="mb-3">
+                                    <button class="btn btn-success me-2" onclick="connectWebSocket()" id="wsConnectBtn">
+                                        <i class="fas fa-plug me-1"></i>
+                                        Connect
+                                    </button>
+                                    <button class="btn btn-primary me-2" onclick="sendWebSocketMessage()" id="wsSendBtn" disabled>
+                                        <i class="fas fa-paper-plane me-1"></i>
+                                        Send
+                                    </button>
+                                    <button class="btn btn-danger" onclick="disconnectWebSocket()" id="wsDisconnectBtn" disabled>
+                                        <i class="fas fa-times me-1"></i>
+                                        Disconnect
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div id="websocketOutput" class="code-output" style="height: 300px; overflow-y: auto;">
+                                    WebSocket messages will appear here...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        let currentTool = null;
+        let websocket = null;
+
+        function openTool(toolName) {
+            // Hide all tools
+            document.querySelectorAll('[id$="Tool"]').forEach(tool => {
+                tool.style.display = 'none';
+            });
+
+            // Show selected tool
+            const toolMap = {
+                'API Key Generator': 'apiKeyTool',
+                'Schema Validator': 'schemaValidatorTool',
+                'Rate Limit Tester': 'rateLimitTool',
+                'WebSocket Debugger': 'websocketTool'
+            };
+
+            const toolId = toolMap[toolName];
+            if (toolId) {
+                document.getElementById(toolId).style.display = 'block';
+                currentTool = toolName;
+            }
+        }
+
+        async function generateApiKey() {
+            const output = document.getElementById('apiKeyOutput');
+            output.textContent = 'Generating API key...';
+
+            try {
+                const response = await fetch('/developer-portal/generate-api-key');
+                const data = await response.json();
+                
+                output.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                output.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        function validateSchema() {
+            const schemaInput = document.getElementById('schemaInput').value;
+            const dataInput = document.getElementById('dataInput').value;
+            const output = document.getElementById('validationOutput');
+
+            try {
+                const schema = JSON.parse(schemaInput);
+                const data = JSON.parse(dataInput);
+                
+                // Simple validation (in a real implementation, you'd use a proper JSON schema validator)
+                output.textContent = 'Validation passed!\n\nSchema: Valid JSON\nData: Valid JSON\n\nNote: This is a simplified validator. For production use, implement proper JSON Schema validation.';
+            } catch (error) {
+                output.textContent = `Validation failed: ${error.message}`;
+            }
+        }
+
+        async function testRateLimit() {
+            const endpoint = document.getElementById('testEndpoint').value;
+            const count = parseInt(document.getElementById('requestCount').value);
+            const interval = parseInt(document.getElementById('requestInterval').value);
+            const output = document.getElementById('rateLimitOutput');
+            const btn = document.getElementById('rateLimitBtn');
+
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Testing...';
+            
+            output.textContent = 'Starting rate limit test...\n\n';
+
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (let i = 0; i < count; i++) {
+                try {
+                    const start = Date.now();
+                    const response = await fetch(endpoint);
+                    const duration = Date.now() - start;
+                    
+                    if (response.ok) {
+                        successCount++;
+                        output.textContent += `Request ${i + 1}: SUCCESS (${response.status}) - ${duration}ms\n`;
+                    } else {
+                        errorCount++;
+                        output.textContent += `Request ${i + 1}: ERROR (${response.status}) - ${duration}ms\n`;
+                    }
+                } catch (error) {
+                    errorCount++;
+                    output.textContent += `Request ${i + 1}: FAILED - ${error.message}\n`;
+                }
+
+                if (i < count - 1) {
+                    await new Promise(resolve => setTimeout(resolve, interval));
+                }
+            }
+
+            output.textContent += `\nTest completed!\nSuccessful: ${successCount}\nErrors: ${errorCount}`;
+            
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-play me-1"></i>Start Test';
+        }
+
+        function connectWebSocket() {
+            const url = document.getElementById('wsUrl').value;
+            const output = document.getElementById('websocketOutput');
+            
+            try {
+                websocket = new WebSocket(url);
+                
+                websocket.onopen = function(event) {
+                    output.textContent += `Connected to ${url}\n`;
+                    document.getElementById('wsConnectBtn').disabled = true;
+                    document.getElementById('wsSendBtn').disabled = false;
+                    document.getElementById('wsDisconnectBtn').disabled = false;
+                };
+                
+                websocket.onmessage = function(event) {
+                    output.textContent += `Received: ${event.data}\n`;
+                    output.scrollTop = output.scrollHeight;
+                };
+                
+                websocket.onclose = function(event) {
+                    output.textContent += `Connection closed (${event.code})\n`;
+                    document.getElementById('wsConnectBtn').disabled = false;
+                    document.getElementById('wsSendBtn').disabled = true;
+                    document.getElementById('wsDisconnectBtn').disabled = true;
+                };
+                
+                websocket.onerror = function(error) {
+                    output.textContent += `Error: ${error}\n`;
+                };
+                
+            } catch (error) {
+                output.textContent += `Connection failed: ${error.message}\n`;
+            }
+        }
+
+        function sendWebSocketMessage() {
+            const message = document.getElementById('wsMessage').value;
+            const output = document.getElementById('websocketOutput');
+            
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(message);
+                output.textContent += `Sent: ${message}\n`;
+                output.scrollTop = output.scrollHeight;
+            } else {
+                output.textContent += `Error: WebSocket not connected\n`;
+            }
+        }
+
+        function disconnectWebSocket() {
+            if (websocket) {
+                websocket.close();
+            }
+        }
+    </script>
+</body>
+</html>

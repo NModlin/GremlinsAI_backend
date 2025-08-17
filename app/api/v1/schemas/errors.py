@@ -15,10 +15,10 @@ from app.core.exceptions import ErrorCode, ErrorSeverity
 class ValidationErrorDetailSchema(BaseModel):
     """Schema for detailed validation error information."""
     
-    field: str = Field(..., description="Field that failed validation", example="email")
-    message: str = Field(..., description="Validation error message", example="Invalid email format")
-    invalid_value: Optional[Any] = Field(None, description="The invalid value that was provided", example="invalid-email")
-    expected_type: Optional[str] = Field(None, description="Expected data type or format", example="valid email address")
+    field: str = Field(..., description="Field that failed validation")
+    message: str = Field(..., description="Validation error message")
+    invalid_value: Optional[Any] = Field(None, description="The invalid value that was provided")
+    expected_type: Optional[str] = Field(None, description="Expected data type or format")
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -35,13 +35,12 @@ class ValidationErrorDetailSchema(BaseModel):
 class ServiceStatusSchema(BaseModel):
     """Schema for service availability status."""
     
-    service_name: str = Field(..., description="Name of the service", example="openai_api")
-    status: str = Field(..., description="Service status", example="degraded")
-    fallback_available: bool = Field(..., description="Whether fallback functionality is available", example=True)
+    service_name: str = Field(..., description="Name of the service")
+    status: str = Field(..., description="Service status")
+    fallback_available: bool = Field(..., description="Whether fallback functionality is available")
     capabilities_affected: List[str] = Field(
-        default_factory=list, 
-        description="List of affected capabilities",
-        example=["multi_agent_reasoning", "advanced_analysis"]
+        default_factory=list,
+        description="List of affected capabilities"
     )
     
     model_config = ConfigDict(
@@ -60,40 +59,35 @@ class ErrorResponseSchema(BaseModel):
     """Comprehensive error response schema for all API endpoints."""
     
     success: bool = Field(False, description="Always false for error responses")
-    error_code: str = Field(..., description="Standardized error code", example="GREMLINS_6001")
-    error_message: str = Field(..., description="Human-readable error message", example="Audio processing failed")
+    error_code: str = Field(..., description="Standardized error code")
+    error_message: str = Field(..., description="Human-readable error message")
     error_details: Optional[str] = Field(
-        None, 
-        description="Additional error details and context",
-        example="Whisper model failed to process audio file: unsupported sample rate"
+        None,
+        description="Additional error details and context"
     )
     
     # Request tracking
     request_id: str = Field(
         default_factory=lambda: f"req_{__import__('uuid').uuid4()}",
-        description="Unique request identifier for tracking",
-        example="req_123e4567-e89b-12d3-a456-426614174000"
+        description="Unique request identifier for tracking"
     )
     timestamp: str = Field(
         default_factory=lambda: __import__('datetime').datetime.now().isoformat(),
-        description="Error occurrence timestamp",
-        example="2024-01-01T12:00:00.000Z"
+        description="Error occurrence timestamp"
     )
     
     # Error categorization
-    severity: str = Field(..., description="Error severity level", example="medium")
-    category: str = Field(..., description="Error category", example="multimodal_processing")
-    
+    severity: str = Field(..., description="Error severity level")
+    category: str = Field(..., description="Error category")
+
     # Remediation guidance
     suggested_action: Optional[str] = Field(
-        None, 
-        description="Suggested action to resolve the error",
-        example="Convert audio to supported format (WAV, MP3) with sample rate 16kHz or 44.1kHz"
+        None,
+        description="Suggested action to resolve the error"
     )
     documentation_url: Optional[str] = Field(
-        None, 
-        description="Link to relevant documentation",
-        example="https://docs.gremlinsai.com/multimodal/audio-processing"
+        None,
+        description="Link to relevant documentation"
     )
     
     # Service status information
@@ -111,14 +105,12 @@ class ErrorResponseSchema(BaseModel):
     
     # Processing-specific details
     processing_step: Optional[str] = Field(
-        None, 
-        description="Processing step where error occurred",
-        example="audio_transcription"
+        None,
+        description="Processing step where error occurred"
     )
     processing_progress: Optional[float] = Field(
-        None, 
-        description="Processing progress when error occurred (0.0-1.0)",
-        example=0.3
+        None,
+        description="Processing progress when error occurred (0.0-1.0)"
     )
     
     model_config = ConfigDict(
@@ -260,9 +252,9 @@ class MultiModalProcessingErrorExample(ErrorResponseSchema):
 
 class AgentProcessingErrorExample(ErrorResponseSchema):
     """Example agent processing error response."""
-    
-    class Config:
-        schema_extra = {
+
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": False,
                 "error_code": "GREMLINS_3000",
@@ -281,13 +273,14 @@ class AgentProcessingErrorExample(ErrorResponseSchema):
                 "processing_progress": 0.7
             }
         }
+    )
 
 
 class RateLimitErrorExample(ErrorResponseSchema):
     """Example rate limit error response."""
-    
-    class Config:
-        schema_extra = {
+
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": False,
                 "error_code": "GREMLINS_1004",
@@ -306,6 +299,7 @@ class RateLimitErrorExample(ErrorResponseSchema):
                 "processing_progress": None
             }
         }
+    )
 
 
 # Response models for different HTTP status codes

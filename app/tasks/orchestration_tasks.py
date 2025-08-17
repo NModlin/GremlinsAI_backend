@@ -7,16 +7,12 @@ import asyncio
 import logging
 import time
 from typing import Dict, Any, List, Optional
-from app.core.celery_app import task
+from celery import current_app as celery_app
 from app.database.database import AsyncSessionLocal
-from app.services.chat_history import ChatHistoryService
-from app.services.document_service import DocumentService
-from app.core.multi_agent import multi_agent_orchestrator
-from app.core.rag_system import rag_system
 
 logger = logging.getLogger(__name__)
 
-@task(bind=True, name="orchestration_tasks.run_comprehensive_workflow")
+@celery_app.task(bind=True, name="orchestration_tasks.run_comprehensive_workflow")
 def run_comprehensive_workflow_task(self, workflow_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Execute a comprehensive workflow that combines multiple system capabilities.

@@ -7,15 +7,13 @@ import asyncio
 import logging
 import time
 from typing import Dict, Any, List, Optional
-from app.core.celery_app import task
+from celery import current_app as celery_app
 from app.database.database import AsyncSessionLocal
-from app.services.chat_history import ChatHistoryService
-from app.core.multi_agent import multi_agent_orchestrator
 
 logger = logging.getLogger(__name__)
 
-@task(bind=True, name="agent_tasks.run_multi_agent_workflow")
-def run_multi_agent_workflow_task(self, workflow_type: str, input_data: str, 
+@celery_app.task(bind=True, name="agent_tasks.run_multi_agent_workflow")
+def run_multi_agent_workflow_task(self, workflow_type: str, input_data: str,
                                  conversation_id: Optional[str] = None,
                                  save_conversation: bool = True) -> Dict[str, Any]:
     """
@@ -63,7 +61,10 @@ async def _execute_multi_agent_workflow(workflow_type: str, input_data: str,
                                       conversation_id: Optional[str],
                                       save_conversation: bool) -> Dict[str, Any]:
     """Execute the multi-agent workflow asynchronously."""
-    
+    # Lazy imports to avoid circular dependencies
+    from app.services.chat_history import ChatHistoryService
+    from app.core.multi_agent import multi_agent_orchestrator
+
     async with AsyncSessionLocal() as db:
         try:
             # Get conversation context if provided
@@ -169,7 +170,10 @@ async def _execute_enhanced_chat(input_data: str, conversation_id: Optional[str]
                                use_multi_agent: bool, use_rag: bool,
                                save_conversation: bool) -> Dict[str, Any]:
     """Execute enhanced chat with optional multi-agent and RAG."""
-    
+    # Lazy imports to avoid circular dependencies
+    from app.services.chat_history import ChatHistoryService
+    from app.core.multi_agent import multi_agent_orchestrator
+
     async with AsyncSessionLocal() as db:
         try:
             # Get conversation context
@@ -295,7 +299,9 @@ def batch_process_conversations_task(self, conversation_ids: List[str],
 async def _batch_process_conversations(conversation_ids: List[str],
                                      operation: str) -> Dict[str, Any]:
     """Execute batch conversation processing."""
-    
+    # Lazy imports to avoid circular dependencies
+    from app.services.chat_history import ChatHistoryService
+
     async with AsyncSessionLocal() as db:
         results = []
         

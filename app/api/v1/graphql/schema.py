@@ -12,10 +12,11 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import AsyncSessionLocal
-from app.services.chat_history import ChatHistoryService
-from app.services.document_service import DocumentService
-from app.core.multi_agent import multi_agent_orchestrator
-from app.core.orchestrator import enhanced_orchestrator, TaskType, ExecutionMode, TaskRequest
+# Lazy imports to avoid circular dependencies
+# from app.services.chat_history import ChatHistoryService
+# from app.services.document_service import DocumentService
+# from app.core.multi_agent import multi_agent_orchestrator
+# from app.core.orchestrator import enhanced_orchestrator, TaskType, ExecutionMode, TaskRequest
 
 logger = logging.getLogger(__name__)
 
@@ -200,10 +201,13 @@ class Query:
     async def conversation(self, id: strawberry.ID) -> Optional[Conversation]:
         """Fetch a conversation by ID."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.services.chat_history import ChatHistoryService
+
             async with AsyncSessionLocal() as db:
                 conversation = await ChatHistoryService.get_conversation(
-                    db=db, 
-                    conversation_id=str(id), 
+                    db=db,
+                    conversation_id=str(id),
                     include_messages=True
                 )
                 
@@ -239,6 +243,9 @@ class Query:
     async def conversations(self, limit: int = 50, offset: int = 0) -> Optional[Conversation]:
         """Fetch conversations with pagination."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.services.chat_history import ChatHistoryService
+
             async with AsyncSessionLocal() as db:
                 conversations_list = await ChatHistoryService.get_conversations(
                     db=db,
@@ -285,6 +292,9 @@ class Query:
     async def agentCapabilities(self) -> Optional[AgentCapability]:
         """Fetch agent capabilities."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.core.multi_agent import multi_agent_orchestrator
+
             capabilities = multi_agent_orchestrator.get_agent_capabilities()
 
             agents_data = []
@@ -334,6 +344,9 @@ class Query:
     async def documents(self, limit: int = 50, offset: int = 0) -> List[Document]:
         """Fetch documents."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.services.document_service import DocumentService
+
             async with AsyncSessionLocal() as db:
                 documents = await DocumentService.get_documents(
                     db=db,
@@ -361,6 +374,9 @@ class Query:
     def agent_capabilities_list(self) -> List[AgentCapability]:
         """Get available agent capabilities."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.core.multi_agent import multi_agent_orchestrator
+
             capabilities = multi_agent_orchestrator.get_agent_capabilities()
             
             return [
@@ -384,6 +400,9 @@ class Query:
     def system_health(self) -> SystemHealth:
         """Get system health status."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.core.orchestrator import enhanced_orchestrator
+
             capabilities = enhanced_orchestrator.get_capabilities()
 
             components = [
@@ -419,13 +438,16 @@ class Mutation:
     async def create_conversation(self, input: ConversationInput) -> Optional[Conversation]:
         """Create a new conversation."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.services.chat_history import ChatHistoryService
+
             async with AsyncSessionLocal() as db:
                 conversation = await ChatHistoryService.create_conversation(
                     db=db,
                     title=input.title,
                     initial_message=input.initial_message
                 )
-                
+
                 # Fetch with messages
                 full_conv = await ChatHistoryService.get_conversation(
                     db=db,
@@ -465,6 +487,9 @@ class Mutation:
     async def add_message(self, input: MessageInput) -> Optional[Message]:
         """Add a message to a conversation."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.services.chat_history import ChatHistoryService
+
             async with AsyncSessionLocal() as db:
                 message = await ChatHistoryService.add_message(
                     db=db,
@@ -503,7 +528,10 @@ class Mutation:
     async def execute_multi_agent_workflow(self, input: MultiAgentInput) -> Optional[str]:
         """Execute a multi-agent workflow."""
         try:
+            # Lazy imports to avoid circular dependency
             from app.api.v1.schemas.multi_agent import WorkflowType
+            from app.core.multi_agent import multi_agent_orchestrator
+            from app.services.chat_history import ChatHistoryService
 
             # Convert string to enum
             workflow_type = WorkflowType(input.workflow_type)
@@ -545,6 +573,9 @@ class Mutation:
     async def create_document(self, input: DocumentInput) -> Optional[Document]:
         """Create a new document."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.services.document_service import DocumentService
+
             async with AsyncSessionLocal() as db:
                 document = await DocumentService.create_document(
                     db=db,
@@ -574,6 +605,9 @@ class Mutation:
     async def sendMessage(self, input: MessageInput) -> Optional[Message]:
         """Send a message to a conversation."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.services.chat_history import ChatHistoryService
+
             async with AsyncSessionLocal() as db:
                 message = await ChatHistoryService.add_message(
                     db=db,
@@ -612,6 +646,9 @@ class Mutation:
     async def executeAgent(self, input: AgentExecutionInput) -> Optional[AgentExecutionResult]:
         """Execute an agent workflow."""
         try:
+            # Lazy import to avoid circular dependency
+            from app.core.multi_agent import multi_agent_orchestrator
+
             # Execute multi-agent workflow
             result = multi_agent_orchestrator.execute_simple_query(
                 query=input.input,

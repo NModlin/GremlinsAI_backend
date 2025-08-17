@@ -153,15 +153,15 @@ class ImageProcessingOptions(BaseModel):
 
 class MultiModalFusionRequest(BaseModel):
     """Request model for multi-modal fusion."""
-    
+
     media_results: List[Dict[str, Any]] = Field(..., description="List of media processing results")
     fusion_strategy: str = Field(
         "concatenate",
         description="Fusion strategy (concatenate, weighted, semantic)"
     )
-    
-    class Config:
-        schema_extra = {
+
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "media_results": [
                     {
@@ -178,6 +178,7 @@ class MultiModalFusionRequest(BaseModel):
                 "fusion_strategy": "concatenate"
             }
         }
+    )
 
 
 class MultiModalFusionResponse(BaseModel):
@@ -357,15 +358,15 @@ class TextToSpeechRequest(BaseModel):
 
 class TextToSpeechResponse(BaseModel):
     """Response model for text-to-speech conversion."""
-    
+
     success: bool = Field(..., description="Whether conversion was successful")
     text: str = Field(..., description="Original text")
     output_format: str = Field(..., description="Output audio format")
     result: Dict[str, Any] = Field(..., description="Conversion result")
     timestamp: str = Field(..., description="Conversion timestamp")
-    
-    class Config:
-        schema_extra = {
+
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": True,
                 "text": "Hello, this is a text-to-speech conversion.",
@@ -377,6 +378,7 @@ class TextToSpeechResponse(BaseModel):
                 "timestamp": "2024-01-01T12:00:00"
             }
         }
+    )
 
 
 class MultiModalHealthResponse(BaseModel):

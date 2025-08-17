@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal, health
+from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal, health, oauth
 from app.api.v1.websocket import endpoints as websocket_endpoints
 from app.database.database import ensure_data_directory
 from app.core.exceptions import GremlinsAIException
@@ -85,6 +85,7 @@ app.include_router(docs.router, prefix="/docs", tags=["Documentation"])
 app.include_router(developer_portal.router, prefix="/developer-portal", tags=["Developer Portal"])
 app.include_router(multimodal.router, prefix="/api/v1/multimodal", tags=["Multi-Modal"])
 app.include_router(health.router, prefix="/api/v1/health", tags=["Health & Monitoring"])
+app.include_router(oauth.router, prefix="/api/v1/oauth", tags=["OAuth Authentication"])
 
 @app.get("/", tags=["Root"])
 async def read_root():
@@ -123,16 +124,20 @@ try:
     graphql_app = GraphQLRouter(graphql_schema)
     app.include_router(graphql_app, prefix="/graphql", tags=["GraphQL"])
 
-except ImportError:
-    # Graceful fallback if strawberry is not installed
     import logging
     logger = logging.getLogger(__name__)
-    logger.warning("Strawberry GraphQL not available. GraphQL endpoints disabled.")
+    logger.info("GraphQL endpoints successfully enabled")
+
+except Exception as e:
+    # Graceful fallback if there are any issues
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(f"GraphQL not available due to error: {e}")
 
     @app.get("/graphql", tags=["GraphQL"])
     async def graphql_unavailable():
         return {
             "error": "GraphQL not available",
-            "message": "Install strawberry-graphql[fastapi] to enable GraphQL endpoints",
+            "message": f"GraphQL setup failed: {str(e)}",
             "install_command": "pip install strawberry-graphql[fastapi]"
         }

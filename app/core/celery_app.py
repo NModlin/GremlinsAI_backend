@@ -26,24 +26,16 @@ def create_celery_app() -> Celery:
         celery_app = Celery(
             'gremlinsai',
             broker='memory://',
-            backend='cache+memory://',
-            include=[
-                'app.tasks.agent_tasks',
-                'app.tasks.document_tasks',
-                'app.tasks.orchestration_tasks'
-            ]
+            backend='cache+memory://'
+            # Note: Task modules will be auto-discovered to avoid circular imports
         )
     else:
         # Create Celery instance with Redis
         celery_app = Celery(
             'gremlinsai',
             broker=redis_url,
-            backend=redis_url,
-            include=[
-                'app.tasks.agent_tasks',
-                'app.tasks.document_tasks',
-                'app.tasks.orchestration_tasks'
-            ]
+            backend=redis_url
+            # Note: Task modules will be auto-discovered to avoid circular imports
         )
     
     # Configure Celery
@@ -87,7 +79,14 @@ def create_celery_app() -> Celery:
         worker_send_task_events=True,
         task_send_sent_event=True,
     )
-    
+
+    # Auto-discover tasks to avoid circular imports
+    celery_app.autodiscover_tasks([
+        'app.tasks.agent_tasks',
+        'app.tasks.document_tasks',
+        'app.tasks.orchestration_tasks'
+    ])
+
     return celery_app
 
 # Create the global Celery app instance
