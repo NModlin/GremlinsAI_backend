@@ -1,0 +1,293 @@
+# Prometheus Alerting Rules for GremlinsAI
+# Phase 4, Task 4.2: Monitoring & Observability
+#
+# This file defines critical alerting rules for operational monitoring
+# including API error rates, latency, system resources, and business metrics.
+
+groups:
+  - name: gremlinsai.api.alerts
+    rules:
+      # Required Alert: High API Error Rate
+      - alert: HighApiErrorRate
+        expr: (rate(http_requests_total{status_code=~"4..|5.."}[5m]) / rate(http_requests_total[5m])) * 100 > 5
+        for: 5m
+        labels:
+          severity: critical
+          service: gremlinsai
+          component: api
+        annotations:
+          summary: "High API error rate detected"
+          description: "API error rate is {{ $value }}% for the last 5 minutes, which is above the 5% threshold. This indicates potential issues with the application or its dependencies."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/high-error-rate"
+          dashboard_url: "https://grafana.gremlinsai.com/d/gremlinsai-main-overview"
+
+      # Required Alert: High API Latency
+      - alert: HighApiLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: critical
+          service: gremlinsai
+          component: api
+        annotations:
+          summary: "High API latency detected"
+          description: "95th percentile API latency is {{ $value }}s, which is above the 2s threshold. This may impact user experience."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/high-latency"
+          dashboard_url: "https://grafana.gremlinsai.com/d/gremlinsai-main-overview"
+
+      # API availability alert
+      - alert: ApiDown
+        expr: up{job="gremlinsai"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: gremlinsai
+          component: api
+        annotations:
+          summary: "GremlinsAI API is down"
+          description: "The GremlinsAI API has been down for more than 1 minute."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/api-down"
+
+      # Slow endpoint alert
+      - alert: SlowEndpoint
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[10m])) by (endpoint) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: api
+        annotations:
+          summary: "Slow endpoint detected: {{ $labels.endpoint }}"
+          description: "Endpoint {{ $labels.endpoint }} has 95th percentile latency of {{ $value }}s over the last 10 minutes."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/slow-endpoint"
+
+  - name: gremlinsai.system.alerts
+    rules:
+      # Required Alert: Host Out of Memory
+      - alert: HostOutOfMemory
+        expr: (1 - (memory_usage_bytes{type="available"} / memory_usage_bytes{type="total"})) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          service: gremlinsai
+          component: system
+        annotations:
+          summary: "Host is running out of memory"
+          description: "Memory usage is {{ $value }}%, predicted to run out of memory soon. Current available memory: {{ query \"memory_usage_bytes{type='available'}\" | first | value | humanize1024 }}B"
+          runbook_url: "https://docs.gremlinsai.com/runbooks/out-of-memory"
+
+      # Memory prediction alert (4 hours ahead)
+      - alert: HostOutOfMemoryPredicted
+        expr: predict_linear(memory_usage_bytes{type="available"}[1h], 4*3600) < 0
+        for: 10m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: system
+        annotations:
+          summary: "Host predicted to run out of memory in 4 hours"
+          description: "Based on current memory usage trends, the host is predicted to run out of memory in approximately 4 hours."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/memory-prediction"
+
+      # High CPU usage alert
+      - alert: HighCpuUsage
+        expr: avg(cpu_usage_percent) > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: system
+        annotations:
+          summary: "High CPU usage detected"
+          description: "Average CPU usage is {{ $value }}% for the last 10 minutes."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/high-cpu"
+
+      # Disk space low alert
+      - alert: DiskSpaceLow
+        expr: (disk_usage_bytes{type="free"} / disk_usage_bytes{type="total"}) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+          service: gremlinsai
+          component: system
+        annotations:
+          summary: "Disk space is running low on {{ $labels.mountpoint }}"
+          description: "Disk space on {{ $labels.mountpoint }} is {{ $value }}% free, which is below the 10% threshold."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/disk-space-low"
+
+      # High disk usage alert
+      - alert: HighDiskUsage
+        expr: (disk_usage_bytes{type="used"} / disk_usage_bytes{type="total"}) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: system
+        annotations:
+          summary: "High disk usage on {{ $labels.mountpoint }}"
+          description: "Disk usage on {{ $labels.mountpoint }} is {{ $value }}%."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/high-disk-usage"
+
+  - name: gremlinsai.business.alerts
+    rules:
+      # LLM API failures
+      - alert: LLMApiFailures
+        expr: (rate(llm_requests_total{status="error"}[5m]) / rate(llm_requests_total[5m])) * 100 > 10
+        for: 5m
+        labels:
+          severity: critical
+          service: gremlinsai
+          component: llm
+        annotations:
+          summary: "High LLM API failure rate"
+          description: "LLM API failure rate is {{ $value }}% for provider {{ $labels.provider }}, model {{ $labels.model }}."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/llm-failures"
+
+      # Weaviate query latency
+      - alert: WeaviateQueryLatency
+        expr: histogram_quantile(0.95, rate(weaviate_query_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: weaviate
+        annotations:
+          summary: "High Weaviate query latency"
+          description: "95th percentile Weaviate query latency is {{ $value }}s for query type {{ $labels.query_type }}."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/weaviate-latency"
+
+      # RAG query failures
+      - alert: RAGQueryFailures
+        expr: (rate(rag_queries_total{status="error"}[5m]) / rate(rag_queries_total[5m])) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: rag
+        annotations:
+          summary: "High RAG query failure rate"
+          description: "RAG query failure rate is {{ $value }}% for query type {{ $labels.query_type }}."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/rag-failures"
+
+      # Multi-agent task failures
+      - alert: MultiAgentTaskFailures
+        expr: (rate(multi_agent_tasks_total{status="error"}[10m]) / rate(multi_agent_tasks_total[10m])) * 100 > 10
+        for: 10m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: multi-agent
+        annotations:
+          summary: "High multi-agent task failure rate"
+          description: "Multi-agent task failure rate is {{ $value }}% for workflow {{ $labels.workflow_type }}."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/multi-agent-failures"
+
+      # Document processing failures
+      - alert: DocumentProcessingFailures
+        expr: (rate(documents_processed_total{status="error"}[10m]) / rate(documents_processed_total[10m])) * 100 > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: document-processing
+        annotations:
+          summary: "High document processing failure rate"
+          description: "Document processing failure rate is {{ $value }}% for document type {{ $labels.document_type }}."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/document-processing-failures"
+
+  - name: gremlinsai.websocket.alerts
+    rules:
+      # WebSocket connection spike
+      - alert: WebSocketConnectionsHigh
+        expr: websocket_connections_total > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: websocket
+        annotations:
+          summary: "High number of WebSocket connections"
+          description: "WebSocket connections for {{ $labels.endpoint }} is {{ $value }}, which may indicate unusual activity."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/websocket-connections-high"
+
+      # WebSocket connection drop
+      - alert: WebSocketConnectionsDrop
+        expr: rate(websocket_connections_total[5m]) < -10
+        for: 2m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: websocket
+        annotations:
+          summary: "Rapid drop in WebSocket connections"
+          description: "WebSocket connections are dropping rapidly for {{ $labels.endpoint }}."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/websocket-connections-drop"
+
+  - name: gremlinsai.security.alerts
+    rules:
+      # High security events
+      - alert: HighSecurityEvents
+        expr: rate(security_events_total{severity="high"}[5m]) * 60 > 10
+        for: 2m
+        labels:
+          severity: critical
+          service: gremlinsai
+          component: security
+        annotations:
+          summary: "High rate of security events"
+          description: "High severity security events are occurring at {{ $value }} events per minute for event type {{ $labels.event_type }}."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/security-events"
+
+      # Authentication failures
+      - alert: AuthenticationFailures
+        expr: rate(authentication_attempts_total{status="failed"}[5m]) * 60 > 20
+        for: 5m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: security
+        annotations:
+          summary: "High authentication failure rate"
+          description: "Authentication failures are occurring at {{ $value }} attempts per minute."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/auth-failures"
+
+  - name: gremlinsai.application.alerts
+    rules:
+      # Application status degraded
+      - alert: ApplicationDegraded
+        expr: app_status != 1  # assuming 1 = healthy
+        for: 2m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: application
+        annotations:
+          summary: "Application status is degraded"
+          description: "Application status is not healthy. Current status: {{ $value }}."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/app-degraded"
+
+      # No requests received
+      - alert: NoRequestsReceived
+        expr: rate(http_requests_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: api
+        annotations:
+          summary: "No API requests received"
+          description: "No API requests have been received for the last 10 minutes."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/no-requests"
+
+      # High active connections
+      - alert: HighActiveConnections
+        expr: active_connections_total > 5000
+        for: 5m
+        labels:
+          severity: warning
+          service: gremlinsai
+          component: api
+        annotations:
+          summary: "High number of active connections"
+          description: "Active {{ $labels.connection_type }} connections: {{ $value }}."
+          runbook_url: "https://docs.gremlinsai.com/runbooks/high-connections"

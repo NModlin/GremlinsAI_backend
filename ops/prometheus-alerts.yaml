@@ -1,0 +1,300 @@
+---
+# Prometheus Alerting Rules for GremlinsAI Production - Task T3.8
+# 
+# This file defines comprehensive alerting rules for 24/7 monitoring
+# of the GremlinsAI Backend production environment.
+#
+# Alert Severity Levels:
+# - critical: Immediate response required (page on-call)
+# - warning: Response within 1 hour (email/slack)
+# - info: Response within 24 hours (ticket)
+
+groups:
+  - name: gremlinsai.critical
+    interval: 30s
+    rules:
+      # Critical Alert 1: High API Error Rate
+      - alert: HighApiErrorRate
+        expr: |
+          (
+            sum(rate(gremlinsai_api_errors_total[5m])) by (instance) /
+            sum(rate(gremlinsai_api_requests_total[5m])) by (instance)
+          ) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+          service: gremlinsai-backend
+          team: platform
+          component: api
+        annotations:
+          summary: "High API error rate detected"
+          description: |
+            API error rate is {{ $value | humanizePercentage }} on instance {{ $labels.instance }}.
+            This exceeds the 5% threshold for more than 2 minutes.
+            
+            Immediate action required:
+            1. Check Grafana dashboard: API Error Rate panel
+            2. Review application logs for error patterns
+            3. Verify downstream service health (database, LLM, Weaviate)
+            4. Consider rolling back recent deployments if error started after deployment
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/high-api-error-rate"
+          grafana_url: "https://grafana.company.com/d/gremlinsai/api-dashboard?orgId=1&refresh=30s"
+          
+      # Critical Alert 2: High LLM Latency
+      - alert: HighLLMLatency
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(gremlinsai_llm_response_duration_seconds_bucket[5m])) by (le, provider)
+          ) > 10
+        for: 3m
+        labels:
+          severity: critical
+          service: gremlinsai-backend
+          team: ai-platform
+          component: llm
+        annotations:
+          summary: "High LLM response latency detected"
+          description: |
+            LLM P99 response latency is {{ $value | humanizeDuration }} for provider {{ $labels.provider }}.
+            This exceeds the 10-second threshold for more than 3 minutes.
+            
+            Immediate action required:
+            1. Check LLM provider status and health
+            2. Review LLM connection pool metrics
+            3. Verify model availability and performance
+            4. Check for resource constraints (CPU, memory)
+            5. Consider activating fallback LLM provider
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/high-llm-latency"
+          grafana_url: "https://grafana.company.com/d/gremlinsai/llm-dashboard?orgId=1&refresh=30s"
+          
+      # Critical Alert 3: Weaviate Down
+      - alert: WeaviateDown
+        expr: |
+          up{job="weaviate"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: weaviate
+          team: data-platform
+          component: vector-db
+        annotations:
+          summary: "Weaviate cluster is down"
+          description: |
+            Weaviate instance {{ $labels.instance }} is unreachable.
+            This will cause RAG functionality to fail completely.
+            
+            Immediate action required:
+            1. Check Weaviate cluster health and logs
+            2. Verify network connectivity to Weaviate
+            3. Check Kubernetes pod status for Weaviate
+            4. Review resource utilization (disk space, memory)
+            5. Restart Weaviate service if necessary
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/weaviate-down"
+          grafana_url: "https://grafana.company.com/d/weaviate/weaviate-dashboard?orgId=1&refresh=30s"
+
+      # Additional Critical Alerts
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            gremlinsai_memory_usage_bytes{component="application"} /
+            (1024 * 1024 * 1024)
+          ) > 2
+        for: 5m
+        labels:
+          severity: critical
+          service: gremlinsai-backend
+          team: platform
+          component: application
+        annotations:
+          summary: "High memory usage detected"
+          description: |
+            Application memory usage is {{ $value | humanize }}GB on {{ $labels.instance }}.
+            This exceeds the 2GB threshold for more than 5 minutes.
+            
+            Risk of OOM kills and service degradation.
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/high-memory-usage"
+
+      - alert: DatabaseConnectionFailure
+        expr: |
+          gremlinsai_database_connections{status="failed"} > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: gremlinsai-backend
+          team: platform
+          component: database
+        annotations:
+          summary: "Database connection failures detected"
+          description: |
+            Database connection failures detected: {{ $value }} failed connections.
+            This will cause data persistence issues.
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/database-connection-failure"
+
+      - alert: PodCrashLooping
+        expr: |
+          rate(kube_pod_container_status_restarts_total{namespace="gremlinsai"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: gremlinsai-backend
+          team: platform
+          component: kubernetes
+        annotations:
+          summary: "Pod crash looping detected"
+          description: |
+            Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is crash looping.
+            Container {{ $labels.container }} has restarted {{ $value }} times in the last 5 minutes.
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/pod-crash-looping"
+
+  - name: gremlinsai.warning
+    interval: 60s
+    rules:
+      - alert: HighApiLatency
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(gremlinsai_api_request_duration_seconds_bucket[5m])) by (le, endpoint)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: gremlinsai-backend
+          team: platform
+          component: api
+        annotations:
+          summary: "High API latency detected"
+          description: |
+            API P95 latency is {{ $value | humanizeDuration }} for endpoint {{ $labels.endpoint }}.
+            This exceeds the 2-second SLA threshold.
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/high-api-latency"
+
+      - alert: LowRAGRelevanceScores
+        expr: |
+          histogram_quantile(0.50, 
+            sum(rate(gremlinsai_rag_relevance_score_bucket[10m])) by (le)
+          ) < 0.3
+        for: 10m
+        labels:
+          severity: warning
+          service: gremlinsai-backend
+          team: ai-platform
+          component: rag
+        annotations:
+          summary: "Low RAG relevance scores detected"
+          description: |
+            RAG median relevance score is {{ $value | humanizePercentage }}.
+            This indicates poor search quality and may affect user experience.
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/low-rag-relevance"
+
+      - alert: HighLLMFallbackRate
+        expr: |
+          (
+            sum(rate(gremlinsai_llm_fallback_total[10m])) /
+            sum(rate(gremlinsai_llm_requests_total[10m]))
+          ) * 100 > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: gremlinsai-backend
+          team: ai-platform
+          component: llm
+        annotations:
+          summary: "High LLM fallback rate detected"
+          description: |
+            LLM fallback rate is {{ $value | humanizePercentage }}.
+            Primary LLM provider may be experiencing issues.
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/high-llm-fallback"
+
+      - alert: LowCacheHitRate
+        expr: |
+          (
+            sum(rate(gremlinsai_rag_cache_total{status="hit"}[10m])) /
+            sum(rate(gremlinsai_rag_cache_total[10m]))
+          ) * 100 < 50
+        for: 10m
+        labels:
+          severity: warning
+          service: gremlinsai-backend
+          team: platform
+          component: cache
+        annotations:
+          summary: "Low cache hit rate detected"
+          description: |
+            Cache hit rate is {{ $value | humanizePercentage }}.
+            This may indicate cache invalidation issues or poor cache strategy.
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/low-cache-hit-rate"
+
+  - name: gremlinsai.info
+    interval: 300s
+    rules:
+      - alert: HighTokenUsage
+        expr: |
+          sum(rate(gremlinsai_llm_tokens_total[1h])) > 1000000
+        for: 15m
+        labels:
+          severity: info
+          service: gremlinsai-backend
+          team: ai-platform
+          component: llm
+        annotations:
+          summary: "High token usage detected"
+          description: |
+            Token usage rate is {{ $value | humanize }} tokens/hour.
+            Monitor for cost implications and potential abuse.
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/high-token-usage"
+
+      - alert: UnusualTrafficPattern
+        expr: |
+          abs(
+            sum(rate(gremlinsai_api_requests_total[1h])) -
+            sum(rate(gremlinsai_api_requests_total[1h] offset 24h))
+          ) / sum(rate(gremlinsai_api_requests_total[1h] offset 24h)) > 0.5
+        for: 30m
+        labels:
+          severity: info
+          service: gremlinsai-backend
+          team: platform
+          component: api
+        annotations:
+          summary: "Unusual traffic pattern detected"
+          description: |
+            Traffic pattern differs by {{ $value | humanizePercentage }} from same time yesterday.
+            May indicate viral content, bot activity, or service issues.
+          runbook_url: "https://wiki.company.com/gremlinsai/runbooks/unusual-traffic"
+
+  - name: gremlinsai.infrastructure
+    interval: 60s
+    rules:
+      - alert: KubernetesNodeNotReady
+        expr: |
+          kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: kubernetes
+          team: infrastructure
+          component: node
+        annotations:
+          summary: "Kubernetes node not ready"
+          description: |
+            Kubernetes node {{ $labels.node }} is not ready.
+            This may affect pod scheduling and service availability.
+          runbook_url: "https://wiki.company.com/infrastructure/runbooks/node-not-ready"
+
+      - alert: PersistentVolumeSpaceRunningLow
+        expr: |
+          (
+            kubelet_volume_stats_available_bytes /
+            kubelet_volume_stats_capacity_bytes
+          ) * 100 < 10
+        for: 5m
+        labels:
+          severity: warning
+          service: kubernetes
+          team: infrastructure
+          component: storage
+        annotations:
+          summary: "Persistent volume space running low"
+          description: |
+            Persistent volume {{ $labels.persistentvolumeclaim }} has less than 10% space remaining.
+            Available: {{ $value | humanizePercentage }} of total capacity.
+          runbook_url: "https://wiki.company.com/infrastructure/runbooks/low-disk-space"

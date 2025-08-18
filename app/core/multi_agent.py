@@ -1,8 +1,18 @@
 # app/core/multi_agent.py
+from __future__ import annotations
 import logging
 from typing import Dict, Any, List, Optional
-from crewai import Agent, Task, Crew, Process
-from crewai_tools import SerperDevTool, WebsiteSearchTool
+
+# CrewAI and tools are optional; enable fallback if not installed
+try:
+    from crewai import Agent, Task, Crew, Process  # type: ignore
+    from crewai_tools import SerperDevTool, WebsiteSearchTool  # type: ignore
+    CREW_AVAILABLE = True
+except Exception:
+    Agent = Task = Crew = Process = None  # type: ignore
+    SerperDevTool = WebsiteSearchTool = None  # type: ignore
+    CREW_AVAILABLE = False
+
 from app.core.llm_config import get_llm, get_llm_info, LLMProvider
 from app.core.tools import duckduckgo_search
 
@@ -34,9 +44,9 @@ class MultiAgentOrchestrator:
         """Create specialized agents for different tasks."""
         agents = {}
 
-        # Only create agents if we have a valid LLM
-        if self.llm is None:
-            logger.warning("No LLM available, creating mock agents")
+        # Only create agents if we have a valid LLM and CrewAI is available
+        if self.llm is None or not CREW_AVAILABLE:
+            logger.warning("LLM or CrewAI not available, creating mock agents")
             return self._create_mock_agents()
 
         # Log LLM provider information
@@ -247,15 +257,25 @@ class MultiAgentOrchestrator:
             research_task = self.create_research_task(query, context)
 
             # Create a crew with just the researcher
-            crew = Crew(
-                agents=[self.agents['researcher']],
-                tasks=[research_task],
-                verbose=True,
-                process=Process.sequential
-            )
-
-            # Execute the task
-            result = crew.kickoff()
+            if CREW_AVAILABLE and Crew is not None and Process is not None:
+                crew = Crew(
+                    agents=[self.agents['researcher']],
+                    tasks=[research_task],
+                    verbose=True,
+                    process=Process.sequential
+                )
+                # Execute the task
+                result = crew.kickoff()
+            else:
+                # Fallback if CrewAI isn't available
+                search_result = duckduckgo_search(query)
+                return {
+                    "query": query,
+                    "result": search_result,
+                    "agents_used": ["fallback_search"],
+                    "task_type": "fallback_search",
+                    "note": "CrewAI not available"
+                }
 
             return {
                 "query": query,
@@ -325,14 +345,17 @@ class MultiAgentOrchestrator:
                 agents_used.append("writer")
 
             # Create and execute the crew
-            crew = Crew(
-                agents=[self.agents[agent] for agent in agents_used],
-                tasks=tasks,
-                verbose=True,
-                process=Process.sequential
-            )
-
-            result = crew.kickoff()
+            if CREW_AVAILABLE and Crew is not None and Process is not None:
+                crew = Crew(
+                    agents=[self.agents[agent] for agent in agents_used],
+                    tasks=tasks,
+                    verbose=True,
+                    process=Process.sequential
+                )
+                result = crew.kickoff()
+            else:
+                # Fallback to simple query if CrewAI isn't available
+                return self.execute_simple_query(query)
 
             return {
                 "query": query,

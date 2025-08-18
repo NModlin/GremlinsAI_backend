@@ -230,3 +230,45 @@ class MultiModalContent(Base):
 
     def __repr__(self):
         return f"<MultiModalContent(id={self.id}, type={self.media_type}, filename={self.filename})>"
+
+
+class OAuthUser(Base):
+    """Model for OAuth authenticated users."""
+    __tablename__ = "oauth_users"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    email = Column(String(255), nullable=False)
+    provider = Column(String(50), nullable=False)  # 'google', 'azure', etc.
+    provider_id = Column(String(255), nullable=False)  # OAuth provider's user ID
+    name = Column(String(255), nullable=True)
+    avatar_url = Column(String(500), nullable=True)
+
+    # API key for backend authentication
+    api_key = Column(String(255), nullable=False)  # The actual API key (encrypted)
+    api_key_hash = Column(String(255), nullable=False)  # Hash for lookup
+
+    # User status and permissions
+    is_active = Column(Boolean, default=True, nullable=False)
+    permissions = Column(JSON, nullable=True)  # List of permissions
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_login = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<OAuthUser(id={self.id}, email={self.email}, provider={self.provider})>"
+
+    def to_dict(self):
+        """Convert to dictionary for API responses."""
+        return {
+            "id": self.id,
+            "email": self.email,
+            "provider": self.provider,
+            "name": self.name,
+            "avatar_url": self.avatar_url,
+            "is_active": self.is_active,
+            "permissions": self.permissions or [],
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "last_login": self.last_login.isoformat() if self.last_login else None
+        }

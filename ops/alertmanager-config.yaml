@@ -1,0 +1,261 @@
+---
+# Alertmanager Configuration for GremlinsAI Production - Task T3.8
+# 
+# This configuration defines routing, grouping, and notification
+# channels for production alerts with 24/7 on-call support.
+
+global:
+  # SMTP configuration for email notifications
+  smtp_smarthost: 'smtp.company.com:587'
+  smtp_from: 'alerts@company.com'
+  smtp_auth_username: 'alerts@company.com'
+  smtp_auth_password: 'smtp-password'
+  smtp_require_tls: true
+
+  # Slack webhook for team notifications
+  slack_api_url: 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX'
+
+# Notification templates
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Routing configuration
+route:
+  # Default grouping and timing
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default-receiver'
+
+  # Routing rules for different alert types
+  routes:
+    # Critical alerts - immediate paging
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 30m
+      routes:
+        # GremlinsAI specific critical alerts
+        - match:
+            service: gremlinsai-backend
+          receiver: 'gremlinsai-critical'
+          continue: true
+        
+        # Infrastructure critical alerts
+        - match:
+            service: kubernetes
+          receiver: 'infrastructure-critical'
+          continue: true
+
+    # Warning alerts - team notifications
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 2m
+      group_interval: 10m
+      repeat_interval: 2h
+
+    # Info alerts - low priority notifications
+    - match:
+        severity: info
+      receiver: 'info-alerts'
+      group_wait: 5m
+      group_interval: 30m
+      repeat_interval: 12h
+
+# Inhibition rules to reduce noise
+inhibit_rules:
+  # Inhibit warning alerts when critical alerts are firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
+
+  # Inhibit info alerts when warning or critical alerts are firing
+  - source_match:
+      severity: 'warning'
+    target_match:
+      severity: 'info'
+    equal: ['alertname', 'cluster', 'service']
+
+# Notification receivers
+receivers:
+  # Default receiver for unmatched alerts
+  - name: 'default-receiver'
+    slack_configs:
+      - api_url: '{{ .slack_api_url }}'
+        channel: '#gremlinsai-alerts'
+        title: 'GremlinsAI Alert'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .Labels.severity }}
+          *Service:* {{ .Labels.service }}
+          {{ end }}
+
+  # Critical alerts - PagerDuty + Slack + Email
+  - name: 'critical-alerts'
+    pagerduty_configs:
+      - routing_key: 'YOUR_PAGERDUTY_INTEGRATION_KEY'
+        description: '{{ .GroupLabels.alertname }} - {{ .CommonAnnotations.summary }}'
+        details:
+          firing: '{{ .Alerts.Firing | len }}'
+          resolved: '{{ .Alerts.Resolved | len }}'
+          service: '{{ .CommonLabels.service }}'
+          severity: '{{ .CommonLabels.severity }}'
+        links:
+          - href: '{{ .CommonAnnotations.runbook_url }}'
+            text: 'Runbook'
+          - href: '{{ .CommonAnnotations.grafana_url }}'
+            text: 'Grafana Dashboard'
+
+    slack_configs:
+      - api_url: '{{ .slack_api_url }}'
+        channel: '#gremlinsai-critical'
+        title: '🚨 CRITICAL ALERT - {{ .GroupLabels.alertname }}'
+        text: |
+          <!channel> Critical alert requires immediate attention!
+          
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Service:* {{ .Labels.service }}
+          *Component:* {{ .Labels.component }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          *Dashboard:* {{ .Annotations.grafana_url }}
+          {{ end }}
+        color: 'danger'
+
+    email_configs:
+      - to: 'oncall@company.com'
+        subject: '🚨 CRITICAL: {{ .GroupLabels.alertname }} - {{ .CommonAnnotations.summary }}'
+        body: |
+          Critical alert fired for GremlinsAI production environment.
+          
+          Alert Details:
+          {{ range .Alerts }}
+          - Alert: {{ .Annotations.summary }}
+          - Description: {{ .Annotations.description }}
+          - Service: {{ .Labels.service }}
+          - Component: {{ .Labels.component }}
+          - Severity: {{ .Labels.severity }}
+          - Runbook: {{ .Annotations.runbook_url }}
+          - Dashboard: {{ .Annotations.grafana_url }}
+          {{ end }}
+          
+          Please respond immediately according to the on-call playbook.
+
+  # GremlinsAI specific critical alerts
+  - name: 'gremlinsai-critical'
+    slack_configs:
+      - api_url: '{{ .slack_api_url }}'
+        channel: '#gremlinsai-oncall'
+        title: '🔥 GremlinsAI Critical Alert'
+        text: |
+          @here GremlinsAI production issue detected!
+          
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Service:* {{ .Labels.service }}
+          *Component:* {{ .Labels.component }}
+          *Team:* {{ .Labels.team }}
+          
+          *Quick Actions:*
+          • Check <{{ .Annotations.grafana_url }}|Grafana Dashboard>
+          • Follow <{{ .Annotations.runbook_url }}|Runbook>
+          • Escalate if not resolved in 30 minutes
+          {{ end }}
+        color: 'danger'
+
+  # Infrastructure critical alerts
+  - name: 'infrastructure-critical'
+    slack_configs:
+      - api_url: '{{ .slack_api_url }}'
+        channel: '#infrastructure-alerts'
+        title: '⚠️ Infrastructure Critical Alert'
+        text: |
+          @channel Infrastructure issue affecting GremlinsAI!
+          
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Component:* {{ .Labels.component }}
+          *Node:* {{ .Labels.node }}
+          {{ end }}
+        color: 'danger'
+
+  # Warning alerts - team notifications
+  - name: 'warning-alerts'
+    slack_configs:
+      - api_url: '{{ .slack_api_url }}'
+        channel: '#gremlinsai-alerts'
+        title: '⚠️ Warning Alert - {{ .GroupLabels.alertname }}'
+        text: |
+          Warning alert for GremlinsAI production:
+          
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Service:* {{ .Labels.service }}
+          *Severity:* {{ .Labels.severity }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        color: 'warning'
+
+    email_configs:
+      - to: 'gremlinsai-team@company.com'
+        subject: '⚠️ Warning: {{ .GroupLabels.alertname }}'
+        body: |
+          Warning alert for GremlinsAI production environment.
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Service: {{ .Labels.service }}
+          Description: {{ .Annotations.description }}
+          {{ end }}
+
+  # Info alerts - low priority
+  - name: 'info-alerts'
+    slack_configs:
+      - api_url: '{{ .slack_api_url }}'
+        channel: '#gremlinsai-info'
+        title: 'ℹ️ Info Alert - {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Info:* {{ .Annotations.summary }}
+          *Service:* {{ .Labels.service }}
+          {{ end }}
+        color: 'good'
+
+# Time-based routing for different notification preferences
+time_intervals:
+  - name: business_hours
+    time_intervals:
+      - times:
+          - start_time: '09:00'
+            end_time: '17:00'
+        weekdays: ['monday:friday']
+        location: 'America/New_York'
+
+  - name: after_hours
+    time_intervals:
+      - times:
+          - start_time: '17:01'
+            end_time: '08:59'
+        weekdays: ['monday:friday']
+        location: 'America/New_York'
+      - weekdays: ['saturday', 'sunday']
+        location: 'America/New_York'
+
+# Mute rules for maintenance windows
+mute_time_intervals:
+  - name: maintenance_window
+    time_intervals:
+      - times:
+          - start_time: '02:00'
+            end_time: '04:00'
+        weekdays: ['sunday']
+        location: 'UTC'

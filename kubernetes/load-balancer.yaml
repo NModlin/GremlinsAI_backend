@@ -1,0 +1,270 @@
+# Load Balancer Configuration for GremlinsAI
+# Phase 3, Task 3.4: Performance Optimization
+#
+# This configuration provides intelligent load balancing across multiple
+# application instances with session affinity, health checks, and traffic
+# distribution for optimal performance under high load.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: gremlinsai-loadbalancer
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: load-balancer
+    tier: networking
+  annotations:
+    # Load balancer configuration
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "60"
+    
+    # Health check configuration
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "10"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "3"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+    
+    # Performance optimizations
+    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "Environment=production,Component=load-balancer"
+spec:
+  type: LoadBalancer
+  sessionAffinity: ClientIP  # Sticky sessions for WebSocket connections
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600  # 1 hour session timeout
+  
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 8000
+    protocol: TCP
+  - name: websocket
+    port: 8080
+    targetPort: 8000
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  
+  selector:
+    app: gremlinsai
+    component: api
+
+---
+# Ingress Controller for advanced load balancing
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gremlinsai-ingress
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: ingress
+  annotations:
+    # Ingress class
+    kubernetes.io/ingress.class: "nginx"
+    
+    # SSL configuration
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
+    # Load balancing configuration
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"  # IP-based load balancing
+    nginx.ingress.kubernetes.io/load-balance: "round_robin"
+    
+    # Performance optimizations
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "5"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    
+    # Rate limiting
+    nginx.ingress.kubernetes.io/rate-limit: "1000"  # 1000 requests per minute
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    
+    # WebSocket support
+    nginx.ingress.kubernetes.io/proxy-set-headers: "gremlinsai/websocket-headers"
+    nginx.ingress.kubernetes.io/websocket-services: "gremlinsai-loadbalancer"
+    
+    # Caching
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+      }
+      
+      location /api/v1/health {
+        access_log off;
+      }
+spec:
+  tls:
+  - hosts:
+    - api.gremlinsai.com
+    - ws.gremlinsai.com
+    secretName: gremlinsai-tls
+  
+  rules:
+  # Main API traffic
+  - host: api.gremlinsai.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: gremlinsai-loadbalancer
+            port:
+              number: 80
+  
+  # WebSocket traffic
+  - host: ws.gremlinsai.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: gremlinsai-loadbalancer
+            port:
+              number: 8080
+
+---
+# ConfigMap for WebSocket headers
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: websocket-headers
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: config
+data:
+  headers: |
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_cache_bypass $http_upgrade;
+
+---
+# Service for internal load balancing
+apiVersion: v1
+kind: Service
+metadata:
+  name: gremlinsai-internal-lb
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: internal-load-balancer
+spec:
+  type: ClusterIP
+  sessionAffinity: None  # Round-robin for internal traffic
+  
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  
+  selector:
+    app: gremlinsai
+    component: api
+
+---
+# EndpointSlice for advanced load balancing
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: gremlinsai-endpoints
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: endpoints
+    kubernetes.io/service-name: gremlinsai-loadbalancer
+addressType: IPv4
+ports:
+- name: http
+  port: 8000
+  protocol: TCP
+- name: metrics
+  port: 9090
+  protocol: TCP
+
+---
+# ServiceMonitor for load balancer metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: gremlinsai-lb-metrics
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: lb-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: gremlinsai
+      component: load-balancer
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+    honorLabels: true
+
+---
+# PrometheusRule for load balancer alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gremlinsai-lb-alerts
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: alerting
+spec:
+  groups:
+  - name: gremlinsai.loadbalancer
+    rules:
+    - alert: HighRequestLatency
+      expr: histogram_quantile(0.95, rate(nginx_ingress_controller_request_duration_seconds_bucket[5m])) > 0.5
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High request latency detected"
+        description: "95th percentile latency is {{ $value }}s"
+    
+    - alert: HighErrorRate
+      expr: rate(nginx_ingress_controller_requests_total{status=~"5.."}[5m]) / rate(nginx_ingress_controller_requests_total[5m]) > 0.05
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "High error rate detected"
+        description: "Error rate is {{ $value | humanizePercentage }}"
+    
+    - alert: LoadBalancerDown
+      expr: up{job="gremlinsai-loadbalancer"} == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Load balancer is down"
+        description: "Load balancer has been down for more than 1 minute"

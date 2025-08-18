@@ -1,0 +1,467 @@
+# GremlinsAI Kubernetes Backup CronJobs
+# Phase 4, Task 4.3: Disaster Recovery & Backup
+#
+# This configuration provides automated backup scheduling for GremlinsAI
+# components using Kubernetes CronJobs with proper resource management
+# and monitoring integration.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gremlinsai-backup
+  labels:
+    app.kubernetes.io/name: gremlinsai-backup
+    app.kubernetes.io/component: disaster-recovery
+
+---
+# ConfigMap for backup configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-config
+  namespace: gremlinsai-backup
+  labels:
+    app.kubernetes.io/name: gremlinsai-backup
+    app.kubernetes.io/component: configuration
+data:
+  S3_BUCKET: "gremlinsai-prod-backups"
+  AWS_REGION: "us-east-1"
+  ENVIRONMENT: "prod"
+  WEAVIATE_URL: "http://weaviate.gremlinsai.svc.cluster.local:8080"
+  REDIS_URL: "redis://redis.gremlinsai.svc.cluster.local:6379"
+  BACKUP_RETENTION_DAYS: "30"
+  LOG_LEVEL: "INFO"
+
+---
+# Secret for AWS credentials (create separately with actual values)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: gremlinsai-backup
+  labels:
+    app.kubernetes.io/name: gremlinsai-backup
+    app.kubernetes.io/component: credentials
+type: Opaque
+data:
+  # Base64 encoded AWS credentials
+  # AWS_ACCESS_KEY_ID: <base64-encoded-access-key>
+  # AWS_SECRET_ACCESS_KEY: <base64-encoded-secret-key>
+  # Create with: kubectl create secret generic aws-credentials --from-literal=AWS_ACCESS_KEY_ID=xxx --from-literal=AWS_SECRET_ACCESS_KEY=yyy -n gremlinsai-backup
+
+---
+# ServiceAccount for backup operations
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-service-account
+  namespace: gremlinsai-backup
+  labels:
+    app.kubernetes.io/name: gremlinsai-backup
+    app.kubernetes.io/component: service-account
+
+---
+# Role for backup operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backup-role
+  namespace: gremlinsai-backup
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding for backup service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backup-role-binding
+  namespace: gremlinsai-backup
+subjects:
+- kind: ServiceAccount
+  name: backup-service-account
+  namespace: gremlinsai-backup
+roleRef:
+  kind: Role
+  name: backup-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Weaviate Backup CronJob - Every 6 hours
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: weaviate-backup
+  namespace: gremlinsai-backup
+  labels:
+    app.kubernetes.io/name: gremlinsai-backup
+    app.kubernetes.io/component: weaviate-backup
+spec:
+  schedule: "15 */6 * * *"  # Every 6 hours at 15 minutes past the hour
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600  # 1 hour timeout
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: gremlinsai-backup
+            app.kubernetes.io/component: weaviate-backup
+        spec:
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: weaviate-backup
+            image: gremlinsai/backup-tools:latest
+            imagePullPolicy: Always
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              echo "Starting Weaviate backup at $(date)"
+              cd /app
+              ./scripts/backup/backup_weaviate.sh \
+                --environment ${ENVIRONMENT} \
+                --bucket ${S3_BUCKET} \
+                --region ${AWS_REGION} \
+                --compress true \
+                --verbose
+              echo "Weaviate backup completed at $(date)"
+            env:
+            - name: ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: ENVIRONMENT
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: S3_BUCKET
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: AWS_REGION
+            - name: WEAVIATE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: WEAVIATE_URL
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /app/backups
+            - name: log-storage
+              mountPath: /app/logs
+          volumes:
+          - name: backup-storage
+            emptyDir:
+              sizeLimit: 10Gi
+          - name: log-storage
+            emptyDir:
+              sizeLimit: 1Gi
+
+---
+# Redis Backup CronJob - Every 6 hours (offset from Weaviate)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redis-backup
+  namespace: gremlinsai-backup
+  labels:
+    app.kubernetes.io/name: gremlinsai-backup
+    app.kubernetes.io/component: redis-backup
+spec:
+  schedule: "45 */6 * * *"  # Every 6 hours at 45 minutes past the hour
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800  # 30 minutes timeout
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: gremlinsai-backup
+            app.kubernetes.io/component: redis-backup
+        spec:
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: redis-backup
+            image: gremlinsai/backup-tools:latest
+            imagePullPolicy: Always
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              echo "Starting Redis backup at $(date)"
+              cd /app
+              ./scripts/backup/backup_redis.sh \
+                --environment ${ENVIRONMENT} \
+                --bucket ${S3_BUCKET} \
+                --region ${AWS_REGION} \
+                --type both \
+                --compress true \
+                --verbose
+              echo "Redis backup completed at $(date)"
+            env:
+            - name: ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: ENVIRONMENT
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: S3_BUCKET
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: AWS_REGION
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: REDIS_URL
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "50m"
+              limits:
+                memory: "256Mi"
+                cpu: "200m"
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /app/backups
+            - name: log-storage
+              mountPath: /app/logs
+          volumes:
+          - name: backup-storage
+            emptyDir:
+              sizeLimit: 5Gi
+          - name: log-storage
+            emptyDir:
+              sizeLimit: 1Gi
+
+---
+# Backup Validation CronJob - Daily
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-validation
+  namespace: gremlinsai-backup
+  labels:
+    app.kubernetes.io/name: gremlinsai-backup
+    app.kubernetes.io/component: backup-validation
+spec:
+  schedule: "30 2 * * *"  # Daily at 2:30 AM
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800  # 30 minutes timeout
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: gremlinsai-backup
+            app.kubernetes.io/component: backup-validation
+        spec:
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: backup-validation
+            image: gremlinsai/backup-tools:latest
+            imagePullPolicy: Always
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              echo "Starting backup validation at $(date)"
+              cd /app
+              ./scripts/validate_backups.sh \
+                --environment ${ENVIRONMENT} \
+                --bucket ${S3_BUCKET} \
+                --region ${AWS_REGION}
+              echo "Backup validation completed at $(date)"
+            env:
+            - name: ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: ENVIRONMENT
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: S3_BUCKET
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: AWS_REGION
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+            resources:
+              requests:
+                memory: "64Mi"
+                cpu: "25m"
+              limits:
+                memory: "128Mi"
+                cpu: "100m"
+
+---
+# Monthly DR Test CronJob - First Saturday of each month
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: monthly-dr-test
+  namespace: gremlinsai-backup
+  labels:
+    app.kubernetes.io/name: gremlinsai-backup
+    app.kubernetes.io/component: dr-test
+spec:
+  schedule: "0 2 1-7 * 6"  # First Saturday of each month at 2:00 AM
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 12
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 14400  # 4 hours timeout (RTO requirement)
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: gremlinsai-backup
+            app.kubernetes.io/component: dr-test
+        spec:
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: dr-test
+            image: gremlinsai/backup-tools:latest
+            imagePullPolicy: Always
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              echo "Starting monthly DR test at $(date)"
+              cd /app
+              ./scripts/monthly_dr_test.sh \
+                --environment staging \
+                --bucket ${S3_BUCKET} \
+                --region ${AWS_REGION} \
+                --test-mode
+              echo "Monthly DR test completed at $(date)"
+            env:
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: S3_BUCKET
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-config
+                  key: AWS_REGION
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "200m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+            volumeMounts:
+            - name: test-storage
+              mountPath: /app/test-data
+          volumes:
+          - name: test-storage
+            emptyDir:
+              sizeLimit: 20Gi
+
+---
+# Monitoring ServiceMonitor for Prometheus (if using Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backup-jobs-monitor
+  namespace: gremlinsai-backup
+  labels:
+    app.kubernetes.io/name: gremlinsai-backup
+    app.kubernetes.io/component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gremlinsai-backup
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics

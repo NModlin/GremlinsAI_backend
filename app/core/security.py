@@ -10,8 +10,10 @@ import hashlib
 import secrets
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 import html
 
 logger = logging.getLogger(__name__)
@@ -263,6 +265,98 @@ def initialize_demo_keys():
     for user_id, permissions in demo_keys:
         api_key = create_api_key(user_id, permissions)
         logger.info(f"Demo API key for {user_id}: {api_key}")
+
+
+# OAuth User Authentication Functions
+async def verify_oauth_api_key(api_key: str, db: AsyncSession) -> Optional[Dict[str, Any]]:
+    """Verify an OAuth-generated API key and return user information."""
+    if not api_key:
+        return None
+
+    try:
+        # Import here to avoid circular imports
+        from app.database.models import OAuthUser
+
+        key_hash = hash_api_key(api_key)
+
+        # Query OAuth user by API key hash
+        stmt = select(OAuthUser).where(
+            OAuthUser.api_key_hash == key_hash,
+            OAuthUser.is_active == True
+        )
+        result = await db.execute(stmt)
+        oauth_user = result.scalar_one_or_none()
+
+        if not oauth_user:
+            return None
+
+        # Update last login timestamp
+        oauth_user.last_login = datetime.utcnow()
+        await db.commit()
+
+        return {
+            "user_id": oauth_user.id,
+            "email": oauth_user.email,
+            "provider": oauth_user.provider,
+            "permissions": oauth_user.permissions or ["read", "write"],
+            "api_key_hash": key_hash,
+            "user_type": "oauth",
+            "name": oauth_user.name,
+            "avatar_url": oauth_user.avatar_url
+        }
+
+    except Exception as e:
+        logger.error(f"OAuth API key verification error: {str(e)}")
+        return None
+
+
+async def authenticate_request_with_oauth(request: Request, db: AsyncSession) -> Optional[Dict[str, Any]]:
+    """Authenticate a request using both legacy API keys and OAuth API keys."""
+    # Try Authorization header first
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        api_key = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Try OAuth API key first (if it starts with gai_)
+        if api_key.startswith("gai_"):
+            oauth_result = await verify_oauth_api_key(api_key, db)
+            if oauth_result:
+                return oauth_result
+
+        # Fall back to legacy API key verification
+        legacy_result = verify_api_key(api_key)
+        if legacy_result:
+            legacy_result["user_type"] = "legacy"
+            return legacy_result
+
+    # Try X-API-Key header
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        # Try OAuth API key first (if it starts with gai_)
+        if api_key.startswith("gai_"):
+            oauth_result = await verify_oauth_api_key(api_key, db)
+            if oauth_result:
+                return oauth_result
+
+        # Fall back to legacy API key verification
+        legacy_result = verify_api_key(api_key)
+        if legacy_result:
+            legacy_result["user_type"] = "legacy"
+            return legacy_result
+
+    return None
+
+
+# Updated FastAPI Dependencies for OAuth support
+async def get_current_user_oauth(request: Request, db: AsyncSession) -> Dict[str, Any]:
+    """FastAPI dependency to get current authenticated user (OAuth + legacy support)."""
+    user_info = await authenticate_request_with_oauth(request, db)
+    return require_authentication(user_info)
+
+
+async def get_current_user_optional_oauth(request: Request, db: AsyncSession) -> Optional[Dict[str, Any]]:
+    """FastAPI dependency to get current user (optional authentication with OAuth support)."""
+    return await authenticate_request_with_oauth(request, db)
 
 
 # Initialize demo keys when module is imported

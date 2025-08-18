@@ -7,16 +7,12 @@ import asyncio
 import logging
 import time
 from typing import Dict, Any, List, Optional
-from app.core.celery_app import task
+from celery import current_app as celery_app
 from app.database.database import AsyncSessionLocal
-from app.services.chat_history import ChatHistoryService
-from app.services.document_service import DocumentService
-from app.core.multi_agent import multi_agent_orchestrator
-from app.core.rag_system import rag_system
 
 logger = logging.getLogger(__name__)
 
-@task(bind=True, name="orchestration_tasks.run_comprehensive_workflow")
+@celery_app.task(bind=True, name="orchestration_tasks.run_comprehensive_workflow")
 def run_comprehensive_workflow_task(self, workflow_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Execute a comprehensive workflow that combines multiple system capabilities.
@@ -221,7 +217,7 @@ async def _execute_comprehensive_workflow(workflow_config: Dict[str, Any]) -> Di
             logger.error(f"Comprehensive workflow execution failed: {str(e)}")
             raise
 
-@task(bind=True, name="orchestration_tasks.system_health_check")
+@celery_app.task(bind=True, name="orchestration_tasks.system_health_check")
 def system_health_check_task(self) -> Dict[str, Any]:
     """
     Perform a comprehensive system health check.
@@ -332,7 +328,7 @@ async def _perform_system_health_check() -> Dict[str, Any]:
     
     return health_status
 
-@task(bind=True, name="orchestration_tasks.cleanup_old_data")
+@celery_app.task(bind=True, name="orchestration_tasks.cleanup_old_data")
 def cleanup_old_data_task(self, days_old: int = 30) -> Dict[str, Any]:
     """
     Clean up old data from the system.

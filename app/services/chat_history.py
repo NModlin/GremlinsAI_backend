@@ -9,6 +9,10 @@ from datetime import datetime
 
 from app.database.models import Conversation, Message
 from app.database.database import AsyncSessionLocal
+from app.services.dual_write_service import dual_write_service
+from app.core.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class ChatHistoryService:
@@ -20,27 +24,61 @@ class ChatHistoryService:
         title: Optional[str] = None,
         initial_message: Optional[str] = None
     ) -> Conversation:
-        """Create a new conversation."""
-        conversation = Conversation(
-            id=str(uuid.uuid4()),
-            title=title or "New Conversation",
-            is_active=True
-        )
-        
-        db.add(conversation)
-        await db.flush()  # Get the ID without committing
-        
-        # Add initial message if provided
-        if initial_message:
-            await ChatHistoryService.add_message(
-                db=db,
-                conversation_id=conversation.id,
-                role="user",
-                content=initial_message
+        """Create a new conversation with dual-write support."""
+        conversation_title = title or "New Conversation"
+        conversation_id = str(uuid.uuid4())
+
+        # Use dual-write service if enabled
+        if dual_write_service.is_dual_write_enabled:
+            conversation_data = {
+                "title": conversation_title,
+                "user_id": None,
+                "summary": None,
+                "metadata": {"is_active": True}
+            }
+
+            success, conv_id, error_info = await dual_write_service.write_conversation(
+                db, conversation_data, conversation_id
             )
-        
-        await db.commit()
-        await db.refresh(conversation)
+
+            if not success:
+                logger.error(f"Dual-write conversation creation failed: {error_info}")
+                raise Exception(f"Failed to create conversation: {error_info}")
+
+            # Add initial message if provided
+            if initial_message:
+                await ChatHistoryService.add_message(
+                    db=db,
+                    conversation_id=conv_id,
+                    role="user",
+                    content=initial_message
+                )
+
+            # Retrieve the created conversation
+            result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
+            conversation = result.scalar_one()
+        else:
+            # Standard SQLite-only creation
+            conversation = Conversation(
+                id=conversation_id,
+                title=conversation_title,
+                is_active=True
+            )
+
+            db.add(conversation)
+            await db.flush()  # Get the ID without committing
+
+            # Add initial message if provided
+            if initial_message:
+                await ChatHistoryService.add_message(
+                    db=db,
+                    conversation_id=conversation.id,
+                    role="user",
+                    content=initial_message
+                )
+
+            await db.commit()
+            await db.refresh(conversation)
 
         # Create a detached copy to avoid session issues
         from app.database.models import Conversation as ConversationModel
@@ -236,30 +274,59 @@ class ChatHistoryService:
         tool_calls: Optional[Dict[str, Any]] = None,
         extra_data: Optional[Dict[str, Any]] = None
     ) -> Optional[Message]:
-        """Add a message to a conversation."""
+        """Add a message to a conversation with dual-write support."""
         # Verify conversation exists
         conversation = await ChatHistoryService.get_conversation(
             db, conversation_id, include_messages=False, active_only=True
         )
-        
+
         if not conversation:
             return None
-        
-        message = Message(
-            id=str(uuid.uuid4()),
-            conversation_id=conversation_id,
-            role=role,
-            content=content,
-            tool_calls=json.dumps(tool_calls) if tool_calls else None,
-            extra_data=json.dumps(extra_data) if extra_data else None
-        )
-        
-        db.add(message)
-        
-        # Update conversation's updated_at timestamp
-        conversation.updated_at = datetime.utcnow()
-        
-        await db.commit()
+
+        message_id = str(uuid.uuid4())
+
+        # Use dual-write service if enabled
+        if dual_write_service.is_dual_write_enabled:
+            message_data = {
+                "conversation_id": conversation_id,
+                "role": role,
+                "content": content,
+                "tool_calls": tool_calls,
+                "extra_data": extra_data
+            }
+
+            success, msg_id, error_info = await dual_write_service.write_message(
+                db, message_data, message_id
+            )
+
+            if not success:
+                logger.error(f"Dual-write message creation failed: {error_info}")
+                return None
+
+            # Update conversation's updated_at timestamp
+            conversation.updated_at = datetime.utcnow()
+            await db.commit()
+
+            # Retrieve the created message
+            result = await db.execute(select(Message).where(Message.id == msg_id))
+            message = result.scalar_one_or_none()
+        else:
+            # Standard SQLite-only creation
+            message = Message(
+                id=message_id,
+                conversation_id=conversation_id,
+                role=role,
+                content=content,
+                tool_calls=json.dumps(tool_calls) if tool_calls else None,
+                extra_data=json.dumps(extra_data) if extra_data else None
+            )
+
+            db.add(message)
+
+            # Update conversation's updated_at timestamp
+            conversation.updated_at = datetime.utcnow()
+
+            await db.commit()
         await db.refresh(message)
 
         # Create a detached copy to avoid session issues with deserialized JSON fields

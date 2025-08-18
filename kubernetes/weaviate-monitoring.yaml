@@ -1,0 +1,329 @@
+---
+# ServiceMonitor for Prometheus Integration
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: weaviate-metrics
+  namespace: gremlinsai
+  labels:
+    app: weaviate
+    component: vector-database
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: weaviate
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+  namespaceSelector:
+    matchNames:
+    - gremlinsai
+
+---
+# PrometheusRule for Weaviate Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: weaviate-alerts
+  namespace: gremlinsai
+  labels:
+    app: weaviate
+    component: vector-database
+    monitoring: prometheus
+spec:
+  groups:
+  - name: weaviate.rules
+    interval: 30s
+    rules:
+    # High Availability Alerts
+    - alert: WeaviateInstanceDown
+      expr: up{job="weaviate"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: weaviate
+      annotations:
+        summary: "Weaviate instance is down"
+        description: "Weaviate instance {{ $labels.instance }} has been down for more than 1 minute."
+    
+    - alert: WeaviateClusterUnhealthy
+      expr: count(up{job="weaviate"} == 1) < 2
+      for: 2m
+      labels:
+        severity: critical
+        service: weaviate
+      annotations:
+        summary: "Weaviate cluster is unhealthy"
+        description: "Less than 2 Weaviate instances are running. Current count: {{ $value }}"
+    
+    # Performance Alerts
+    - alert: WeaviateHighLatency
+      expr: histogram_quantile(0.95, rate(weaviate_requests_total_duration_ms_bucket[5m])) > 100
+      for: 5m
+      labels:
+        severity: warning
+        service: weaviate
+      annotations:
+        summary: "Weaviate high latency detected"
+        description: "95th percentile latency is {{ $value }}ms, exceeding 100ms threshold."
+    
+    - alert: WeaviateHighErrorRate
+      expr: rate(weaviate_requests_total{status=~"4..|5.."}[5m]) / rate(weaviate_requests_total[5m]) > 0.05
+      for: 3m
+      labels:
+        severity: warning
+        service: weaviate
+      annotations:
+        summary: "Weaviate high error rate"
+        description: "Error rate is {{ $value | humanizePercentage }}, exceeding 5% threshold."
+    
+    # Resource Alerts
+    - alert: WeaviateHighCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{pod=~"weaviate-.*"}[5m]) > 3.5
+      for: 10m
+      labels:
+        severity: warning
+        service: weaviate
+      annotations:
+        summary: "Weaviate high CPU usage"
+        description: "CPU usage is {{ $value }} cores, approaching the 4 core limit."
+    
+    - alert: WeaviateHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"weaviate-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: weaviate
+      annotations:
+        summary: "Weaviate high memory usage"
+        description: "Memory usage is {{ $value | humanizePercentage }} of limit."
+    
+    - alert: WeaviateDiskSpaceRunningLow
+      expr: (node_filesystem_avail_bytes{mountpoint="/var/lib/weaviate"} / node_filesystem_size_bytes{mountpoint="/var/lib/weaviate"}) < 0.1
+      for: 5m
+      labels:
+        severity: critical
+        service: weaviate
+      annotations:
+        summary: "Weaviate disk space running low"
+        description: "Available disk space is {{ $value | humanizePercentage }} on {{ $labels.instance }}."
+    
+    # QPS and Throughput Alerts
+    - alert: WeaviateLowQPS
+      expr: rate(weaviate_requests_total[5m]) < 100
+      for: 10m
+      labels:
+        severity: info
+        service: weaviate
+      annotations:
+        summary: "Weaviate low QPS detected"
+        description: "Current QPS is {{ $value }}, which is unusually low."
+    
+    - alert: WeaviateHighQPS
+      expr: rate(weaviate_requests_total[5m]) > 12000
+      for: 2m
+      labels:
+        severity: warning
+        service: weaviate
+      annotations:
+        summary: "Weaviate high QPS detected"
+        description: "Current QPS is {{ $value }}, approaching capacity limits."
+
+---
+# Grafana Dashboard ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: weaviate-dashboard
+  namespace: gremlinsai
+  labels:
+    app: weaviate
+    component: vector-database
+    grafana_dashboard: "1"
+data:
+  weaviate-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Weaviate Cluster Monitoring",
+        "tags": ["weaviate", "vector-database"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Cluster Health",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "count(up{job=\"weaviate\"} == 1)",
+                "legendFormat": "Healthy Instances"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "yellow", "value": 2},
+                    {"color": "green", "value": 3}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 2,
+            "title": "Request Rate (QPS)",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum(rate(weaviate_requests_total[5m]))",
+                "legendFormat": "Total QPS"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Requests per second",
+                "min": 0
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Response Latency",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.50, rate(weaviate_requests_total_duration_ms_bucket[5m]))",
+                "legendFormat": "50th percentile"
+              },
+              {
+                "expr": "histogram_quantile(0.95, rate(weaviate_requests_total_duration_ms_bucket[5m]))",
+                "legendFormat": "95th percentile"
+              },
+              {
+                "expr": "histogram_quantile(0.99, rate(weaviate_requests_total_duration_ms_bucket[5m]))",
+                "legendFormat": "99th percentile"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Latency (ms)",
+                "min": 0
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Error Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(weaviate_requests_total{status=~\"4..|5..\"}[5m]) / rate(weaviate_requests_total[5m])",
+                "legendFormat": "Error Rate"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Error Rate (%)",
+                "min": 0,
+                "max": 1
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "title": "Resource Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{pod=~\"weaviate-.*\"}[5m])",
+                "legendFormat": "CPU Usage ({{ $labels.pod }})"
+              },
+              {
+                "expr": "container_memory_usage_bytes{pod=~\"weaviate-.*\"} / 1024 / 1024 / 1024",
+                "legendFormat": "Memory Usage GB ({{ $labels.pod }})"
+              }
+            ]
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "30s"
+      }
+    }
+
+---
+# NetworkPolicy for Security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: weaviate-network-policy
+  namespace: gremlinsai
+  labels:
+    app: weaviate
+    component: vector-database
+spec:
+  podSelector:
+    matchLabels:
+      app: weaviate
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from application pods
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: gremlinsai
+    - podSelector:
+        matchLabels:
+          tier: application
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 50051
+  # Allow inter-cluster communication
+  - from:
+    - podSelector:
+        matchLabels:
+          app: weaviate
+    ports:
+    - protocol: TCP
+      port: 7100
+    - protocol: TCP
+      port: 7101
+  # Allow monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow inter-cluster communication
+  - to:
+    - podSelector:
+        matchLabels:
+          app: weaviate
+    ports:
+    - protocol: TCP
+      port: 7100
+    - protocol: TCP
+      port: 7101

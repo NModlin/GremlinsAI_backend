@@ -167,13 +167,24 @@ class AgentSystem:
     async def _execute_rag_agent(self, task: AgentTask) -> Dict[str, Any]:
         """Execute a RAG-enhanced agent task."""
         try:
-            from app.core.rag_system import rag_system
-            
+            from app.core.rag_system import production_rag_system
+
             # Use RAG system for enhanced responses
-            result = await asyncio.wait_for(
-                rag_system.query_with_rag(task.query, task.context),
+            rag_response = await asyncio.wait_for(
+                production_rag_system.generate_response(
+                    query=task.query,
+                    context_limit=5,
+                    certainty_threshold=0.7
+                ),
                 timeout=task.timeout
             )
+
+            # Convert to expected format
+            result = {
+                "answer": rag_response.answer,
+                "sources": rag_response.sources,
+                "confidence": rag_response.confidence
+            }
             
             return {
                 "task_id": task.task_id,

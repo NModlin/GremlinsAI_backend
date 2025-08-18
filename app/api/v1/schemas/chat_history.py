@@ -22,9 +22,48 @@ class MessageBase(BaseModel):
     @field_validator('content')
     @classmethod
     def validate_content(cls, v):
+        """Enhanced content validation with security checks."""
         if not v or not v.strip():
             raise ValueError('Content cannot be empty')
-        return v
+
+        # Security validation
+        if len(v) > 10000:  # Prevent extremely large payloads
+            raise ValueError('Content exceeds maximum length of 10,000 characters')
+
+        # Check for potential XSS patterns
+        dangerous_patterns = [
+            '<script', 'javascript:', 'onerror=', 'onload=', 'onclick=',
+            'document.cookie', 'eval(', 'innerHTML', 'outerHTML'
+        ]
+
+        v_lower = v.lower()
+        for pattern in dangerous_patterns:
+            if pattern in v_lower:
+                from app.core.logging_config import log_input_validation_failure
+                log_input_validation_failure(
+                    field_name="content",
+                    field_value=v,
+                    validation_error=f"Potential XSS pattern detected: {pattern}"
+                )
+                raise ValueError('Content contains potentially dangerous patterns')
+
+        # Check for SQL injection patterns
+        sql_patterns = [
+            "'; drop table", "union select", "' or '1'='1",
+            "' or 1=1", "'; delete from", "'; update "
+        ]
+
+        for pattern in sql_patterns:
+            if pattern in v_lower:
+                from app.core.logging_config import log_input_validation_failure
+                log_input_validation_failure(
+                    field_name="content",
+                    field_value=v,
+                    validation_error=f"Potential SQL injection pattern detected: {pattern}"
+                )
+                raise ValueError('Content contains potentially dangerous SQL patterns')
+
+        return v.strip()
 
 
 class MessageCreate(MessageBase):

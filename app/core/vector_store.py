@@ -308,5 +308,5 @@ vector_store = VectorStoreManager(
     qdrant_host=os.getenv("QDRANT_HOST", "localhost"),
     qdrant_port=int(os.getenv("QDRANT_PORT", "6333")),
     embedding_model=os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
-    collection_name=os.getenv("QDRANT_COLLECTION", "gremlins_documents")
+    collection_name=os.getenv("QDRANT_COLLECTION_NAME", "gremlins_documents")
 )

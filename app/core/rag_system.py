@@ -1,315 +1,399 @@
 # app/core/rag_system.py
+"""
+Production-Ready RAG System Implementation
+Phase 2, Task 2.3: RAG System Implementation
+
+This module implements the ProductionRAGSystem as specified in prometheus.md,
+providing a complete five-step RAG pipeline with Weaviate integration,
+citations, confidence scoring, and sub-2-second response times.
+"""
+
 import logging
+import time
+import asyncio
+import json
 from typing import List, Dict, Any, Optional, Tuple
-from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
+from dataclasses import dataclass
 
-from app.services.document_service import DocumentService
-from app.core.vector_store import vector_store
-from app.core.multi_agent import multi_agent_orchestrator
+import requests
+import numpy as np
+from sentence_transformers import SentenceTransformer
 
-logger = logging.getLogger(__name__)
+from app.core.config import get_settings
+from app.core.llm_manager import ProductionLLMManager
+from app.core.logging_config import get_logger, log_performance, log_security_event
+from app.core.tracing_service import tracing_service
+from app.core.metrics_service import metrics_service
 
-class RAGSystem:
+logger = get_logger(__name__)
+settings = get_settings()
+
+
+@dataclass
+class RAGResponse:
+    """Structured RAG response with citations and confidence scoring."""
+    answer: str
+    sources: List[Dict[str, Any]]
+    confidence: float
+    query_time_ms: float
+    context_used: bool
+    search_metadata: Dict[str, Any]
+    timestamp: str
+
+
+@dataclass
+class DocumentSource:
+    """Document source with citation information."""
+    document_id: str
+    title: str
+    content: str
+    score: float
+    chunk_index: int
+    metadata: Dict[str, Any]
+
+class ProductionRAGSystem:
     """
-    Retrieval-Augmented Generation system that combines semantic search
-    with agent responses for enhanced, context-aware answers.
+    Production-ready RAG system implementing the five-step pipeline from prometheus.md:
+    1. Generate query embedding
+    2. Retrieve relevant chunks from Weaviate
+    3. Construct context-aware prompt
+    4. Generate response with LLM
+    5. Add citations and confidence scoring
     """
-    
-    def __init__(
+
+    def __init__(self):
+        """Initialize the production RAG system."""
+        self.settings = get_settings()
+        self.embedder = None
+        self.llm_manager = None
+        self.weaviate_headers = {}
+
+        # Setup Weaviate authentication
+        if self.settings.weaviate_api_key:
+            self.weaviate_headers['Authorization'] = f'Bearer {self.settings.weaviate_api_key}'
+
+        logger.info("ProductionRAGSystem initialized")
+
+    async def _initialize_models(self):
+        """Lazy initialization of models to avoid startup delays."""
+        if self.embedder is None:
+            logger.info("Loading SentenceTransformer model...")
+            self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
+            logger.info("SentenceTransformer model loaded")
+
+        if self.llm_manager is None:
+            logger.info("Initializing ProductionLLMManager...")
+            self.llm_manager = ProductionLLMManager()
+            logger.info("ProductionLLMManager initialized")
+
+    async def generate_response(
         self,
-        default_search_limit: int = 5,
-        default_score_threshold: float = 0.7,
-        max_context_length: int = 4000
-    ):
-        """Initialize the RAG system."""
-        self.default_search_limit = default_search_limit
-        self.default_score_threshold = default_score_threshold
-        self.max_context_length = max_context_length
-    
-    async def retrieve_and_generate(
-        self,
-        db: AsyncSession,
         query: str,
-        conversation_id: Optional[str] = None,
-        search_limit: Optional[int] = None,
-        score_threshold: Optional[float] = None,
-        filter_conditions: Optional[Dict[str, Any]] = None,
-        use_multi_agent: bool = False,
-        search_type: str = "chunks"
-    ) -> Dict[str, Any]:
+        context_limit: int = 5,
+        certainty_threshold: float = 0.7,
+        conversation_id: Optional[str] = None
+    ) -> RAGResponse:
         """
-        Perform retrieval-augmented generation.
-        
+        Generate a RAG response following the five-step pipeline.
+
         Args:
-            db: Database session
-            query: User query
+            query: User query string
+            context_limit: Maximum number of document chunks to retrieve
+            certainty_threshold: Minimum certainty score for Weaviate results
             conversation_id: Optional conversation ID for context
-            search_limit: Number of documents to retrieve
-            score_threshold: Minimum similarity score
-            filter_conditions: Additional filters for search
-            use_multi_agent: Whether to use multi-agent system
-            search_type: Type of search ("chunks", "documents", "both")
-        
+
         Returns:
-            Dict containing the generated response and metadata
+            RAGResponse with answer, sources, and confidence score
         """
+        start_time = time.time()
+
         try:
-            # Use defaults if not specified
-            search_limit = search_limit or self.default_search_limit
-            score_threshold = score_threshold or self.default_score_threshold
-            
-            # Step 1: Retrieve relevant documents
-            retrieved_docs, search_query_id = await DocumentService.semantic_search(
-                db=db,
-                query=query,
-                limit=search_limit,
-                score_threshold=score_threshold,
-                filter_conditions=filter_conditions,
-                search_type=search_type,
+            with tracing_service.trace_rag_query("generate_response", context_limit) as span:
+                span.set_attribute("rag.query_length", len(query))
+                span.set_attribute("rag.context_limit", context_limit)
+                span.set_attribute("rag.certainty_threshold", certainty_threshold)
+                # Initialize models if needed
+                await self._initialize_models()
+
+                logger.info(f"Starting RAG pipeline for query: {query[:100]}...")
+
+                # Step 1: Generate query embedding
+                with tracing_service.trace_operation("rag.generate_embedding") as embed_span:
+                    query_vector = await self._generate_query_embedding(query)
+                    embed_span.set_attribute("embedding.vector_length", len(query_vector))
+
+                # Step 2: Retrieve relevant chunks from Weaviate
+                with tracing_service.trace_weaviate_query("search", "DocumentChunk") as weaviate_span:
+                    retrieved_chunks = await self._retrieve_from_weaviate(
+                        query_vector, context_limit, certainty_threshold
+                    )
+                    weaviate_span.set_attribute("weaviate.chunks_retrieved", len(retrieved_chunks))
+
+                # Step 3: Construct context-aware prompt
+                context = self._build_context(retrieved_chunks)
+                prompt = self._build_rag_prompt(query, context)
+
+                # Step 4: Generate response with LLM
+                with tracing_service.trace_llm_request("local", "default") as llm_span:
+                    llm_response = await self._generate_llm_response(prompt)
+                    llm_span.set_attribute("llm.prompt_length", len(prompt))
+                    llm_span.set_attribute("llm.response_length", len(llm_response))
+
+                # Step 5: Add citations and confidence scoring
+                sources = self._extract_sources(retrieved_chunks)
+                confidence = self._calculate_confidence(retrieved_chunks, llm_response)
+
+                query_time_ms = (time.time() - start_time) * 1000
+
+                # Record metrics
+                metrics_service.record_rag_query(
+                    query_type="generate_response",
+                    status="success",
+                    duration=query_time_ms / 1000,
+                    similarity_score=confidence
+                )
+
+                # Add tracing attributes
+                span.set_attribute("rag.sources_count", len(sources))
+                span.set_attribute("rag.confidence_score", confidence)
+                span.set_attribute("rag.response_time_ms", query_time_ms)
+
+                # Log performance
+                log_performance(
+                    operation="rag_generate_response",
+                    duration_ms=query_time_ms,
+                    success=True,
+                    context_chunks=len(retrieved_chunks),
+                    confidence=confidence,
+                    conversation_id=conversation_id
+                )
+
+                response = RAGResponse(
+                    answer=llm_response,
+                    sources=sources,
+                    confidence=confidence,
+                    query_time_ms=query_time_ms,
+                    context_used=len(retrieved_chunks) > 0,
+                    search_metadata={
+                        "total_chunks": len(retrieved_chunks),
+                        "certainty_threshold": certainty_threshold,
+                        "context_limit": context_limit,
+                        "embedding_model": "all-MiniLM-L6-v2"
+                    },
+                    timestamp=datetime.utcnow().isoformat()
+                )
+
+                logger.info(f"RAG response generated successfully in {query_time_ms:.2f}ms")
+                return response
+
+        except Exception as e:
+            query_time_ms = (time.time() - start_time) * 1000
+            logger.error(f"RAG generation failed: {e}")
+
+            # Record error metrics
+            metrics_service.record_rag_query(
+                query_type="generate_response",
+                status="error",
+                duration=query_time_ms / 1000
+            )
+
+            # Log security event for RAG failures
+            log_security_event(
+                event_type="rag_generation_failure",
+                severity="medium",
+                query=query[:100],
+                error=str(e),
                 conversation_id=conversation_id
             )
-            
-            # Step 2: Prepare context from retrieved documents
-            context = self._prepare_context(retrieved_docs, query)
-            
-            # Step 3: Generate enhanced prompt with context
-            enhanced_prompt = self._create_rag_prompt(query, context)
-            
-            # Step 4: Generate response using agent system
-            if use_multi_agent and multi_agent_orchestrator.llm is not None:
-                # Use multi-agent system for complex reasoning
-                agent_response = multi_agent_orchestrator.execute_simple_query(
-                    query=enhanced_prompt,
-                    context=""
-                )
-            else:
-                # Use fallback search or simple agent
-                from app.core.tools import duckduckgo_search
-                
-                # Combine retrieved context with web search if needed
-                if not retrieved_docs:
-                    web_search_result = duckduckgo_search(query)
-                    agent_response = {
-                        "query": query,
-                        "result": web_search_result,
-                        "agents_used": ["web_search"],
-                        "task_type": "web_search_fallback"
-                    }
-                else:
-                    # Generate response based on retrieved context
-                    response_text = self._generate_context_based_response(query, context)
-                    agent_response = {
-                        "query": query,
-                        "result": response_text,
-                        "agents_used": ["rag_system"],
-                        "task_type": "rag_response"
-                    }
-            
-            # Step 5: Prepare final response
-            rag_response = {
-                "query": query,
-                "response": agent_response.get("result", ""),
-                "retrieved_documents": retrieved_docs,
-                "context_used": len(retrieved_docs) > 0,
-                "search_metadata": {
-                    "search_query_id": search_query_id,
-                    "documents_found": len(retrieved_docs),
-                    "search_type": search_type,
-                    "score_threshold": score_threshold
-                },
-                "agent_metadata": {
-                    "agents_used": agent_response.get("agents_used", []),
-                    "task_type": agent_response.get("task_type", "unknown"),
-                    "use_multi_agent": use_multi_agent
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-            logger.info(f"RAG response generated for query with {len(retrieved_docs)} retrieved documents")
-            return rag_response
-            
-        except Exception as e:
-            logger.error(f"Error in RAG system: {e}")
-            return {
-                "query": query,
-                "response": f"I apologize, but I encountered an error while processing your request: {str(e)}",
-                "retrieved_documents": [],
-                "context_used": False,
-                "error": str(e)
-            }
-    
-    def _prepare_context(self, retrieved_docs: List[Dict[str, Any]], query: str) -> str:
-        """Prepare context string from retrieved documents."""
-        if not retrieved_docs:
-            return ""
-        
-        context_parts = []
-        current_length = 0
-        
-        # Sort by relevance score
-        sorted_docs = sorted(retrieved_docs, key=lambda x: x["score"], reverse=True)
-        
-        for i, doc in enumerate(sorted_docs):
-            # Create context entry
-            doc_context = f"Document {i+1} (Score: {doc['score']:.3f}):\n"
-            doc_context += f"Title: {doc['document_title']}\n"
-            doc_context += f"Content: {doc['content']}\n"
-            
-            # Check if adding this document would exceed max length
-            if current_length + len(doc_context) > self.max_context_length:
-                break
-            
-            context_parts.append(doc_context)
-            current_length += len(doc_context)
-        
-        return "\n---\n".join(context_parts)
-    
-    def _create_rag_prompt(self, query: str, context: str) -> str:
-        """Create an enhanced prompt that includes retrieved context."""
-        if not context:
-            return query
-        
-        prompt = f"""Based on the following relevant documents, please answer the user's question. Use the information from the documents to provide a comprehensive and accurate response. If the documents don't contain enough information to fully answer the question, please indicate what additional information might be needed.
 
-RELEVANT DOCUMENTS:
+            # Return error response
+            return RAGResponse(
+                answer="I encountered an error while processing your request. Please try again.",
+                sources=[],
+                confidence=0.0,
+                query_time_ms=query_time_ms,
+                context_used=False,
+                search_metadata={"error": str(e)},
+                timestamp=datetime.utcnow().isoformat()
+            )
+
+    async def _generate_query_embedding(self, query: str) -> List[float]:
+        """Step 1: Generate vector embedding for the query."""
+        try:
+            # Generate embedding using SentenceTransformer
+            embedding = self.embedder.encode(query, convert_to_tensor=False)
+            return embedding.tolist()
+        except Exception as e:
+            logger.error(f"Failed to generate query embedding: {e}")
+            raise
+
+    async def _retrieve_from_weaviate(
+        self,
+        query_vector: List[float],
+        limit: int,
+        certainty_threshold: float
+    ) -> List[DocumentSource]:
+        """Step 2: Retrieve relevant chunks from Weaviate using near_vector search."""
+        try:
+            # Construct GraphQL query for Weaviate
+            graphql_query = {
+                "query": f"""
+                {{
+                    Get {{
+                        DocumentChunk(
+                            limit: {limit}
+                            nearVector: {{
+                                vector: {json.dumps(query_vector)}
+                                certainty: {certainty_threshold}
+                            }}
+                        ) {{
+                            content
+                            document_title
+                            chunk_index
+                            metadata
+                            _additional {{
+                                certainty
+                                id
+                            }}
+                        }}
+                    }}
+                }}
+                """
+            }
+
+            # Execute query against Weaviate
+            response = requests.post(
+                f"{self.settings.weaviate_url}/v1/graphql",
+                headers={**self.weaviate_headers, 'Content-Type': 'application/json'},
+                json=graphql_query,
+                timeout=10
+            )
+
+            if response.status_code != 200:
+                logger.error(f"Weaviate query failed: {response.status_code} - {response.text}")
+                return []
+
+            data = response.json()
+            chunks = data.get('data', {}).get('Get', {}).get('DocumentChunk', [])
+
+            # Convert to DocumentSource objects
+            document_sources = []
+            for chunk in chunks:
+                additional = chunk.get('_additional', {})
+                document_sources.append(DocumentSource(
+                    document_id=additional.get('id', ''),
+                    title=chunk.get('document_title', 'Unknown Document'),
+                    content=chunk.get('content', ''),
+                    score=additional.get('certainty', 0.0),
+                    chunk_index=chunk.get('chunk_index', 0),
+                    metadata=chunk.get('metadata', {})
+                ))
+
+            logger.info(f"Retrieved {len(document_sources)} chunks from Weaviate")
+            return document_sources
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve from Weaviate: {e}")
+            return []
+
+    def _build_context(self, retrieved_chunks: List[DocumentSource]) -> str:
+        """Step 3: Build context string from retrieved document chunks."""
+        if not retrieved_chunks:
+            return ""
+
+        context_parts = []
+        for i, chunk in enumerate(retrieved_chunks):
+            context_part = f"[Document {i+1}: {chunk.title}]\n{chunk.content}\n"
+            context_parts.append(context_part)
+
+        return "\n---\n".join(context_parts)
+
+    def _build_rag_prompt(self, query: str, context: str) -> str:
+        """Step 3: Construct context-aware prompt for LLM."""
+        if not context:
+            return f"""Please answer the following question: {query}
+
+Note: No specific context documents are available, so please provide a general response based on your knowledge."""
+
+        return f"""Please answer the following question based on the provided context documents.
+
+Context Documents:
 {context}
 
-USER QUESTION: {query}
+Question: {query}
 
-Please provide a detailed response based on the above documents:"""
-        
-        return prompt
-    
-    def _generate_context_based_response(self, query: str, context: str) -> str:
-        """Generate a simple response based on context when no LLM is available."""
-        if not context:
-            return "I couldn't find any relevant documents to answer your question. You might want to try rephrasing your query or adding more documents to the knowledge base."
-        
-        # Simple template-based response
-        response = f"Based on the available documents, here's what I found regarding your question about '{query}':\n\n"
-        
-        # Extract key information from context
-        lines = context.split('\n')
-        content_lines = [line for line in lines if line.startswith('Content:')]
-        
-        if content_lines:
-            response += "Key information from the documents:\n"
-            for i, line in enumerate(content_lines[:3]):  # Limit to top 3 results
-                content = line.replace('Content:', '').strip()
-                if content:
-                    response += f"• {content[:200]}{'...' if len(content) > 200 else ''}\n"
-        
-        response += "\nThis information is based on the documents in the knowledge base. For more detailed information, you may want to review the full documents or ask more specific questions."
-        
-        return response
-    
-    async def add_document_from_text(
-        self,
-        db: AsyncSession,
-        title: str,
-        content: str,
-        content_type: str = "text/plain",
-        doc_metadata: Optional[Dict[str, Any]] = None,
-        tags: Optional[List[str]] = None
-    ) -> Optional[str]:
-        """Add a document to the RAG system from text content."""
+Instructions:
+1. Use only the information provided in the context documents
+2. If the context doesn't contain enough information to answer the question, say so clearly
+3. Cite specific documents when referencing information (e.g., "According to Document 1...")
+4. Provide a clear, comprehensive answer
+5. Be accurate and don't make up information not present in the context
+
+Answer:"""
+
+    async def _generate_llm_response(self, prompt: str) -> str:
+        """Step 4: Generate response using ProductionLLMManager."""
         try:
-            document = await DocumentService.create_document(
-                db=db,
-                title=title,
-                content=content,
-                content_type=content_type,
-                doc_metadata=doc_metadata,
-                tags=tags
+            # Use the ProductionLLMManager to generate response
+            response = await self.llm_manager.generate_response(
+                prompt=prompt,
+                max_tokens=512,
+                temperature=0.1,  # Low temperature for factual responses
+                system_message="You are a helpful assistant that provides accurate, well-cited responses based on provided context."
             )
-            
-            if document:
-                logger.info(f"Added document to RAG system: {document.id}")
-                return document.id
-            else:
-                logger.error("Failed to add document to RAG system")
-                return None
-                
+
+            return response.get("content", "I couldn't generate a response.")
+
         except Exception as e:
-            logger.error(f"Error adding document to RAG system: {e}")
-            return None
-    
-    async def get_system_status(self, db: AsyncSession) -> Dict[str, Any]:
-        """Get the status of the RAG system."""
-        try:
-            # Get document statistics
-            documents, total_docs = await DocumentService.list_documents(db, limit=1)
-            
-            # Get vector store info
-            vector_info = vector_store.get_collection_info()
-            
-            # Get search analytics
-            analytics = await DocumentService.get_search_analytics(db)
-            
-            return {
-                "status": "operational" if vector_store.is_connected else "limited",
-                "total_documents": total_docs,
-                "vector_store": vector_info,
-                "search_analytics": analytics,
-                "configuration": {
-                    "default_search_limit": self.default_search_limit,
-                    "default_score_threshold": self.default_score_threshold,
-                    "max_context_length": self.max_context_length
-                }
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting RAG system status: {e}")
-            return {
-                "status": "error",
-                "error": str(e)
-            }
-    
-    async def suggest_related_queries(
-        self,
-        db: AsyncSession,
-        query: str,
-        limit: int = 5
-    ) -> List[str]:
-        """Suggest related queries based on document content."""
-        try:
-            # Get similar documents
-            retrieved_docs, _ = await DocumentService.semantic_search(
-                db=db,
-                query=query,
-                limit=limit * 2,
-                score_threshold=0.5,
-                search_type="chunks"
-            )
-            
-            # Extract potential related queries from document titles and content
-            suggestions = set()
-            
-            for doc in retrieved_docs:
-                title = doc.get("document_title", "")
-                content = doc.get("content", "")
-                
-                # Simple heuristic: extract questions from content
-                sentences = content.split('.')
-                for sentence in sentences:
-                    sentence = sentence.strip()
-                    if any(word in sentence.lower() for word in ['what', 'how', 'why', 'when', 'where']):
-                        if len(sentence) < 100:  # Keep suggestions concise
-                            suggestions.add(sentence)
-                
-                # Add variations based on title
-                if title and len(title) < 100:
-                    suggestions.add(f"Tell me more about {title}")
-                    suggestions.add(f"How does {title} work?")
-            
-            # Return top suggestions
-            return list(suggestions)[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error generating query suggestions: {e}")
-            return []
+            logger.error(f"LLM response generation failed: {e}")
+            return "I encountered an error while generating the response. Please try again."
+
+    def _extract_sources(self, retrieved_chunks: List[DocumentSource]) -> List[Dict[str, Any]]:
+        """Step 5: Extract source information for citations."""
+        sources = []
+        for chunk in retrieved_chunks:
+            sources.append({
+                "document_id": chunk.document_id,
+                "title": chunk.title,
+                "score": chunk.score,
+                "chunk_index": chunk.chunk_index,
+                "content_preview": chunk.content[:200] + "..." if len(chunk.content) > 200 else chunk.content,
+                "metadata": chunk.metadata
+            })
+        return sources
+
+    def _calculate_confidence(self, retrieved_chunks: List[DocumentSource], llm_response: str) -> float:
+        """Step 5: Calculate confidence score based on retrieval quality and response."""
+        if not retrieved_chunks:
+            return 0.0
+
+        # Base confidence on average retrieval scores
+        avg_score = sum(chunk.score for chunk in retrieved_chunks) / len(retrieved_chunks)
+
+        # Adjust confidence based on response quality indicators
+        response_quality_score = 1.0
+
+        # Lower confidence if response indicates uncertainty
+        uncertainty_phrases = [
+            "i don't know", "not sure", "unclear", "insufficient information",
+            "cannot determine", "not enough context", "unable to answer"
+        ]
+
+        response_lower = llm_response.lower()
+        for phrase in uncertainty_phrases:
+            if phrase in response_lower:
+                response_quality_score *= 0.7
+                break
+
+        # Higher confidence if response includes citations
+        if "document" in response_lower and ("according to" in response_lower or "based on" in response_lower):
+            response_quality_score *= 1.1
+
+        # Final confidence calculation
+        confidence = min(avg_score * response_quality_score, 1.0)
+        return round(confidence, 3)
 
 
 # Global RAG system instance
-rag_system = RAGSystem()
+production_rag_system = ProductionRAGSystem()

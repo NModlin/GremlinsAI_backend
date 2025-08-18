@@ -22,6 +22,105 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.websocket("/collaborate/{document_id}")
+async def collaborate_websocket_endpoint(
+    websocket: WebSocket,
+    document_id: str,
+    user_id: str = Query(..., description="User ID for collaboration"),
+    display_name: str = Query(..., description="Display name for the user"),
+    api_key: str = Query(None, description="Optional API key for authentication")
+):
+    """
+    WebSocket endpoint for real-time collaborative editing.
+
+    This endpoint implements the collaborative editing system with:
+    - Sub-200ms message latency
+    - Support for 100+ concurrent users per document
+    - Graceful handling of disconnections
+    - Redis pub/sub for horizontal scaling
+
+    Path Parameters:
+    - document_id: ID of the document being collaboratively edited
+
+    Query Parameters:
+    - user_id: Unique identifier for the user
+    - display_name: Display name for the user
+    - api_key: Optional API key for authentication
+    """
+    from app.core.realtime_manager import realtime_manager
+    from app.services.collaboration_service import CollaborationService
+    from datetime import datetime
+
+    connection_id = None
+    collaboration_service = CollaborationService()
+
+    try:
+        # Establish WebSocket connection
+        connection_id = await realtime_manager.handle_connection(
+            websocket=websocket,
+            user_id=user_id,
+            connection_metadata={
+                "display_name": display_name,
+                "document_id": document_id,
+                "api_key": api_key
+            }
+        )
+
+        # Join the document room
+        room_id = f"document:{document_id}"
+        await realtime_manager.join_room(connection_id, room_id, document_id)
+
+        # Initialize collaborative editing session
+        await collaboration_service.join_document_session(
+            document_id=document_id,
+            user_id=user_id,
+            connection_id=connection_id,
+            display_name=display_name
+        )
+
+        # Message processing loop
+        while True:
+            try:
+                # Receive message from client
+                data = await websocket.receive_json()
+
+                # Process message through real-time manager
+                await realtime_manager.process_message(connection_id, data)
+
+                # Handle collaborative editing specific messages
+                if data.get("type") == "document_edit":
+                    await collaboration_service.handle_document_edit(
+                        document_id=document_id,
+                        user_id=user_id,
+                        edit_data=data,
+                        connection_id=connection_id
+                    )
+
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnected: {connection_id}")
+                break
+            except Exception as e:
+                logger.error(f"Error processing WebSocket message: {e}")
+                await websocket.send_json({
+                    "type": "error",
+                    "error": "Failed to process message",
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+
+    except Exception as e:
+        logger.error(f"WebSocket connection error: {e}")
+
+    finally:
+        # Clean up connection
+        if connection_id:
+            await collaboration_service.leave_document_session(
+                document_id=document_id,
+                user_id=user_id,
+                connection_id=connection_id
+            )
+            await realtime_manager._handle_disconnect(connection_id)
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,

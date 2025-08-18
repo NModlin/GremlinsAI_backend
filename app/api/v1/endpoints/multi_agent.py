@@ -8,6 +8,9 @@ from typing import Dict, Any
 from app.database.database import get_db
 from app.services.chat_history import ChatHistoryService
 from app.services.agent_memory import AgentMemoryService
+from app.core.security_service import SecurityContext, get_current_user, require_permission, Permission
+from app.core.tracing_service import tracing_service
+from app.core.metrics_service import metrics_service
 from app.core.multi_agent import multi_agent_orchestrator
 from app.api.v1.schemas.multi_agent import (
     MultiAgentRequest,
@@ -23,58 +26,239 @@ from app.api.v1.schemas.multi_agent import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.post("/execute")
+@router.post("/execute-task")
 async def execute_multi_agent_task(
+    request: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: SecurityContext = Depends(require_permission(Permission.WRITE))
+):
+    """
+    Execute a complex multi-agent task using the CrewAI framework.
+
+    This endpoint implements the complete multi-agent coordination system with:
+    - Multiple specialized agents (researcher, analyst, writer, coordinator)
+    - Inter-agent communication and context preservation
+    - Graceful error handling and fallback mechanisms
+    - Performance monitoring and metrics tracking
+    """
+    start_time = time.time()
+
+    # Extract request parameters for tracing
+    task_description = request.get("task_description", "")
+    workflow_type = request.get("workflow_type", "research_analyze_write")
+    context = request.get("context", {})
+    timeout = request.get("timeout", 300)
+
+    agents = ["researcher", "analyst", "writer", "coordinator"]  # Default agents
+
+    with tracing_service.trace_multi_agent_task(workflow_type, agents) as span:
+        span.set_attribute("multi_agent.task_description_length", len(task_description))
+        span.set_attribute("multi_agent.timeout", timeout)
+        span.set_attribute("multi_agent.user_id", current_user.user_id)
+
+        try:
+
+            if not task_description:
+                raise HTTPException(status_code=422, detail="task_description is required")
+
+            # Validate workflow type
+            valid_workflows = ["research_analyze_write", "complex_analysis", "collaborative_query"]
+            if workflow_type not in valid_workflows:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid workflow_type. Must be one of: {valid_workflows}"
+                )
+
+            # Import and use the multi-agent service
+            from app.services.multi_agent_service import multi_agent_service
+
+            # Execute the multi-agent task
+            with tracing_service.trace_operation("multi_agent.execute_crew_task") as task_span:
+                result = await multi_agent_service.execute_crew_task(
+                    task_description=task_description,
+                    workflow_type=workflow_type,
+                    context=context,
+                    timeout=timeout
+                )
+
+                # Record metrics
+                execution_time = time.time() - start_time
+                status = "success" if result.success else "error"
+
+                metrics_service.record_multi_agent_task(
+                    workflow_type=workflow_type,
+                    status=status,
+                    duration=execution_time
+                )
+
+                # Add tracing attributes
+                span.set_attribute("multi_agent.success", result.success)
+                span.set_attribute("multi_agent.execution_time", execution_time)
+                span.set_attribute("multi_agent.agents_count", len(result.agents_involved))
+                task_span.set_attribute("multi_agent.result_length", len(result.result))
+
+            # Save to conversation history if requested
+            conversation_id = request.get("conversation_id")
+            if request.get("save_conversation", False) and conversation_id:
+                try:
+                    await ChatHistoryService.add_message(
+                        db=db,
+                        conversation_id=conversation_id,
+                        role="user",
+                        content=task_description
+                    )
+                    await ChatHistoryService.add_message(
+                        db=db,
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=result.result,
+                        extra_data={
+                            "workflow_type": workflow_type,
+                            "agents_involved": result.agents_involved,
+                            "execution_time": result.execution_time,
+                            "performance_metrics": result.performance_metrics
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save conversation: {e}")
+
+            # Return comprehensive response
+            return {
+                "success": result.success,
+                "result": result.result,
+                "agents_involved": result.agents_involved,
+                "execution_time": result.execution_time,
+                "workflow_type": result.workflow_type,
+                "context_preserved": result.context_preserved,
+                "performance_metrics": result.performance_metrics,
+                "error_message": result.error_message,
+                "conversation_id": conversation_id,
+                "timestamp": time.time()
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            # Record error metrics
+            execution_time = time.time() - start_time
+            metrics_service.record_multi_agent_task(
+                workflow_type=workflow_type,
+                status="error",
+                duration=execution_time
+            )
+
+            # Add error to span
+            span.set_attribute("multi_agent.error", str(e))
+            span.set_attribute("multi_agent.status", "error")
+
+            logger.error(f"Multi-agent task execution failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Task execution failed: {str(e)}")
+
+
+@router.post("/execute")
+async def execute_multi_agent_task_legacy(
     request: dict,
     db: AsyncSession = Depends(get_db)
 ):
-    """Execute a multi-agent task with simplified interface."""
-    start_time = time.time()
+    """Legacy endpoint for backward compatibility."""
+    # Map legacy request to new format
+    new_request = {
+        "task_description": request.get("input", ""),
+        "workflow_type": request.get("workflow_type", "research_analyze_write"),
+        "context": {"legacy_context": request.get("context", "")},
+        "conversation_id": request.get("conversation_id"),
+        "save_conversation": request.get("save_conversation", True)
+    }
+
+    # Call the new endpoint
+    return await execute_multi_agent_task(new_request, db)
+
+
+@router.get("/performance")
+async def get_multi_agent_performance():
+    """
+    Get performance metrics for the multi-agent system.
+
+    Returns comprehensive performance data including:
+    - Task completion statistics
+    - Average execution times
+    - Success rates
+    - Most used workflows
+    - Active workflow information
+    """
     try:
-        input_text = request.get("input", "")
-        workflow_type = request.get("workflow_type", "simple_research")
-        save_conversation = request.get("save_conversation", True)
+        from app.services.multi_agent_service import multi_agent_service
 
-        if not input_text:
-            raise HTTPException(status_code=422, detail="Input is required")
+        # Get performance summary
+        performance_summary = multi_agent_service.get_performance_summary()
 
-        # Execute based on workflow type
-        if workflow_type == "simple_research":
-            result = multi_agent_orchestrator.execute_simple_query(
-                query=input_text,
-                context=request.get("context", "")
-            )
-        elif workflow_type in ["complex_analysis", "research_analyze_write"]:
-            # For complex workflows, use simple query for now
-            result = multi_agent_orchestrator.execute_simple_query(
-                query=input_text,
-                context=request.get("context", "")
-            )
-        else:
-            raise HTTPException(status_code=422, detail=f"Unsupported workflow type: {workflow_type}")
-
-        execution_time = time.time() - start_time
-
-        # Determine if context was used
-        context_used = bool(request.get("conversation_id") or request.get("context"))
+        # Get active workflows
+        active_workflows = multi_agent_service.get_active_workflows()
 
         return {
-            "output": result.get("result", ""),  # Map 'result' to 'output'
-            "conversation_id": request.get("conversation_id"),
-            "context_used": context_used,
-            "execution_time": execution_time,
-            "metadata": {
-                "agents_used": result.get("agents_used", []),
-                "workflow_type": workflow_type,
-                "sources": result.get("sources", [])
+            "performance_summary": performance_summary,
+            "active_workflows": active_workflows,
+            "system_status": "operational",
+            "timestamp": time.time()
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get performance metrics: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve performance metrics: {str(e)}")
+
+
+@router.get("/workflows")
+async def get_available_workflows():
+    """
+    Get information about available multi-agent workflows.
+
+    Returns details about each workflow type including:
+    - Workflow description
+    - Agents involved
+    - Typical use cases
+    - Expected execution time
+    """
+    try:
+        workflows = {
+            "research_analyze_write": {
+                "description": "Sequential workflow: Research → Analysis → Writing",
+                "agents": ["researcher", "analyst", "writer"],
+                "use_cases": ["Content creation", "Report generation", "Research summaries"],
+                "typical_execution_time": "60-180 seconds",
+                "complexity": "high"
+            },
+            "complex_analysis": {
+                "description": "Deep analysis workflow with multiple perspectives",
+                "agents": ["researcher", "analyst", "coordinator"],
+                "use_cases": ["Data analysis", "Strategic planning", "Risk assessment"],
+                "typical_execution_time": "90-240 seconds",
+                "complexity": "very high"
+            },
+            "collaborative_query": {
+                "description": "Collaborative query processing with delegation",
+                "agents": ["researcher", "analyst", "writer", "coordinator"],
+                "use_cases": ["Complex Q&A", "Multi-faceted research", "Comprehensive responses"],
+                "typical_execution_time": "45-120 seconds",
+                "complexity": "medium"
             }
         }
 
-    except HTTPException:
-        raise
+        return {
+            "available_workflows": workflows,
+            "total_workflows": len(workflows),
+            "recommended_workflow": "research_analyze_write",
+            "system_capabilities": {
+                "max_concurrent_workflows": 5,
+                "timeout_limit": 300,
+                "context_preservation": True,
+                "error_recovery": True
+            }
+        }
+
     except Exception as e:
-        logger.error(f"Multi-agent execution failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Execution failed: {str(e)}")
+        logger.error(f"Failed to get workflow information: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve workflow information: {str(e)}")
+
 
 @router.post("/workflow", response_model=MultiAgentResponse)
 async def execute_multi_agent_workflow(

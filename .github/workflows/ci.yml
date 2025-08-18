@@ -1,0 +1,472 @@
+name: GremlinsAI CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  PYTHON_VERSION: "3.11"
+  POETRY_VERSION: "1.6.1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      weaviate:
+        image: semitechnologies/weaviate:1.24.0
+        ports:
+          - 8080:8080
+        env:
+          QUERY_DEFAULTS_LIMIT: 25
+          AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+          PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+          DEFAULT_VECTORIZER_MODULE: 'none'
+          ENABLE_MODULES: 'text2vec-openai,text2vec-cohere,text2vec-huggingface,ref2vec-centroid,generative-openai,qna-openai'
+          CLUSTER_HOSTNAME: 'node1'
+        options: >-
+          --health-cmd "wget --no-verbose --tries=3 --spider http://localhost:8080/v1/meta || exit 1"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libpq-dev \
+          libffi-dev \
+          libssl-dev \
+          python3-dev \
+          ffmpeg \
+          libsm6 \
+          libxext6
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest-cov pytest-xdist pytest-asyncio
+        pip install docker psutil  # For integration tests
+
+    - name: Set up test environment
+      run: |
+        mkdir -p logs
+        mkdir -p data/test
+        
+        # Set test environment variables
+        echo "TESTING=true" >> $GITHUB_ENV
+        echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
+        echo "DATABASE_URL=sqlite+aiosqlite:///./test.db" >> $GITHUB_ENV
+        echo "WEAVIATE_URL=http://localhost:8080" >> $GITHUB_ENV
+        echo "REDIS_URL=redis://localhost:6379" >> $GITHUB_ENV
+        echo "OLLAMA_BASE_URL=http://localhost:11434" >> $GITHUB_ENV
+        echo "OLLAMA_MODEL=llama3.2:3b" >> $GITHUB_ENV
+        echo "LLM_CACHE_TTL=300" >> $GITHUB_ENV
+        echo "OPENAI_API_KEY=test-key-not-used" >> $GITHUB_ENV
+        echo "ANTHROPIC_API_KEY=test-key-not-used" >> $GITHUB_ENV
+
+    - name: Wait for services to be ready
+      run: |
+        # Wait for Redis
+        timeout 60 bash -c 'until redis-cli -h localhost -p 6379 ping; do sleep 1; done'
+        
+        # Wait for Weaviate
+        timeout 120 bash -c 'until curl -f http://localhost:8080/v1/meta; do sleep 2; done'
+        
+        echo "All services are ready"
+
+    - name: Run linting
+      run: |
+        pip install flake8 black isort
+        
+        # Check code formatting
+        black --check --diff app/ tests/
+        
+        # Check import sorting
+        isort --check-only --diff app/ tests/
+        
+        # Run flake8 linting
+        flake8 app/ tests/ --max-line-length=120 --extend-ignore=E203,W503
+
+    - name: Run unit tests
+      run: |
+        pytest tests/unit/ \
+          -v \
+          --cov=app \
+          --cov-report=xml \
+          --cov-report=html \
+          --cov-report=term-missing \
+          --cov-fail-under=50 \
+          --maxfail=5 \
+          --tb=short \
+          --durations=10
+
+    - name: Run integration tests
+      run: |
+        pytest tests/integration/ \
+          -v \
+          --tb=short \
+          --durations=10 \
+          --maxfail=3
+      timeout-minutes: 15
+
+    - name: Run end-to-end tests
+      run: |
+        pytest tests/e2e/ \
+          -v \
+          --tb=short \
+          --durations=10 \
+          --maxfail=2
+      timeout-minutes: 20
+
+    - name: Run performance tests (if not PR)
+      if: github.event_name != 'pull_request'
+      run: |
+        pytest tests/performance/ \
+          -v \
+          --tb=short \
+          --durations=10 \
+          -m "not slow"
+      timeout-minutes: 10
+
+    - name: Generate test report
+      if: always()
+      run: |
+        pip install pytest-html
+        pytest tests/ \
+          --html=reports/test-report.html \
+          --self-contained-html \
+          --tb=short \
+          || true
+
+    - name: Upload coverage reports
+      if: always()
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+    - name: Upload test artifacts
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results-${{ github.run_number }}
+        path: |
+          coverage.xml
+          htmlcov/
+          reports/
+          logs/
+        retention-days: 30
+
+    - name: Check test coverage threshold
+      run: |
+        # Extract coverage percentage from coverage report
+        COVERAGE=$(python -c "
+        import xml.etree.ElementTree as ET
+        try:
+            tree = ET.parse('coverage.xml')
+            root = tree.getroot()
+            coverage = float(root.attrib['line-rate']) * 100
+            print(f'{coverage:.1f}')
+        except:
+            print('0.0')
+        ")
+        
+        echo "Current test coverage: ${COVERAGE}%"
+        
+        # Set minimum coverage threshold
+        MIN_COVERAGE=50.0
+        
+        if (( $(echo "$COVERAGE < $MIN_COVERAGE" | bc -l) )); then
+          echo "❌ Test coverage ${COVERAGE}% is below minimum threshold ${MIN_COVERAGE}%"
+          exit 1
+        else
+          echo "✅ Test coverage ${COVERAGE}% meets minimum threshold ${MIN_COVERAGE}%"
+        fi
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install security tools
+      run: |
+        pip install bandit safety semgrep pip-audit
+        # Install additional security tools
+        npm install -g retire
+        curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
+    - name: Run Bandit SAST scan
+      run: |
+        echo "Running Bandit static application security testing..."
+        bandit -r app/ -f json -o bandit-report.json -ll
+        bandit -r app/ -f txt -ll
+
+        # Check for high severity issues
+        HIGH_ISSUES=$(jq '.results | map(select(.issue_severity == "HIGH")) | length' bandit-report.json)
+        if [ "$HIGH_ISSUES" -gt 0 ]; then
+          echo "❌ Found $HIGH_ISSUES high severity security issues"
+          echo "High severity issues found:"
+          jq '.results | map(select(.issue_severity == "HIGH"))' bandit-report.json
+          exit 1
+        else
+          echo "✅ No high severity security issues found"
+        fi
+
+    - name: Run Safety dependency check
+      run: |
+        echo "Running Safety dependency vulnerability check..."
+        safety check --json --output safety-report.json --continue-on-error
+        safety check --continue-on-error
+
+        # Check for vulnerabilities
+        VULNS=$(jq '.vulnerabilities | length' safety-report.json 2>/dev/null || echo "0")
+        if [ "$VULNS" -gt 0 ]; then
+          echo "⚠️ Found $VULNS dependency vulnerabilities"
+          jq '.vulnerabilities' safety-report.json
+        else
+          echo "✅ No dependency vulnerabilities found"
+        fi
+
+    - name: Run pip-audit for additional dependency scanning
+      run: |
+        echo "Running pip-audit for comprehensive dependency scanning..."
+        pip-audit --format=json --output=pip-audit-report.json --continue-on-error || true
+        pip-audit --continue-on-error || true
+
+    - name: Run Semgrep SAST scan
+      run: |
+        echo "Running Semgrep static analysis..."
+        semgrep --config=auto --json --output=semgrep-report.json app/ || true
+        semgrep --config=auto app/ || true
+
+        # Check for critical findings
+        if [ -f semgrep-report.json ]; then
+          CRITICAL=$(jq '.results | map(select(.extra.severity == "ERROR")) | length' semgrep-report.json)
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "❌ Found $CRITICAL critical security issues in Semgrep scan"
+            jq '.results | map(select(.extra.severity == "ERROR"))' semgrep-report.json
+            exit 1
+          else
+            echo "✅ No critical security issues found in Semgrep scan"
+          fi
+        fi
+
+    - name: Run container security scan
+      run: |
+        echo "Running container security scan with Grype..."
+        # Build a test image for scanning
+        docker build -t gremlinsai-security-test .
+        grype gremlinsai-security-test --output json --file grype-report.json || true
+        grype gremlinsai-security-test || true
+
+    - name: Check for secrets in code
+      run: |
+        echo "Scanning for secrets and sensitive data..."
+        # Simple regex-based secret detection
+        SECRET_PATTERNS="(password|passwd|pwd|secret|key|token|api_key|private_key|credential)"
+
+        # Scan for potential secrets (excluding test files and this CI file)
+        SECRETS_FOUND=$(grep -r -i -E "$SECRET_PATTERNS\s*=\s*['\"][^'\"]{8,}" app/ --exclude-dir=__pycache__ --exclude="*.pyc" | grep -v "test" | grep -v "example" | wc -l)
+
+        if [ "$SECRETS_FOUND" -gt 0 ]; then
+          echo "⚠️ Potential secrets found in code:"
+          grep -r -i -E "$SECRET_PATTERNS\s*=\s*['\"][^'\"]{8,}" app/ --exclude-dir=__pycache__ --exclude="*.pyc" | grep -v "test" | grep -v "example" || true
+          echo "Please review these findings and ensure no real secrets are committed"
+        else
+          echo "✅ No obvious secrets found in code"
+        fi
+
+    - name: Security scan summary
+      if: always()
+      run: |
+        echo "=== SECURITY SCAN SUMMARY ==="
+        echo "Bandit SAST: $([ -f bandit-report.json ] && echo "✅ Completed" || echo "❌ Failed")"
+        echo "Safety Dependencies: $([ -f safety-report.json ] && echo "✅ Completed" || echo "❌ Failed")"
+        echo "Semgrep SAST: $([ -f semgrep-report.json ] && echo "✅ Completed" || echo "❌ Failed")"
+        echo "Container Scan: $([ -f grype-report.json ] && echo "✅ Completed" || echo "❌ Failed")"
+        echo "Secrets Scan: ✅ Completed"
+
+        # Generate combined security report
+        echo '{"timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "scans": {}}' > security-summary.json
+
+        if [ -f bandit-report.json ]; then
+          jq '.scans.bandit = input' security-summary.json bandit-report.json > temp.json && mv temp.json security-summary.json
+        fi
+
+        if [ -f safety-report.json ]; then
+          jq '.scans.safety = input' security-summary.json safety-report.json > temp.json && mv temp.json security-summary.json
+        fi
+
+        echo "Security scan completed. Check artifacts for detailed reports."
+
+    - name: Upload security reports
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports-${{ github.run_number }}
+        path: |
+          bandit-report.json
+          safety-report.json
+          pip-audit-report.json
+          semgrep-report.json
+          grype-report.json
+          security-summary.json
+        retention-days: 30
+
+    - name: Comment security results on PR
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+
+          let comment = '## 🔒 Security Scan Results\n\n';
+
+          // Read Bandit results
+          try {
+            const banditData = JSON.parse(fs.readFileSync('bandit-report.json', 'utf8'));
+            const highIssues = banditData.results.filter(r => r.issue_severity === 'HIGH').length;
+            const mediumIssues = banditData.results.filter(r => r.issue_severity === 'MEDIUM').length;
+
+            comment += `**Bandit SAST Scan:**\n`;
+            comment += `- High severity issues: ${highIssues}\n`;
+            comment += `- Medium severity issues: ${mediumIssues}\n`;
+            comment += highIssues > 0 ? '❌ Action required\n\n' : '✅ Passed\n\n';
+          } catch (e) {
+            comment += '**Bandit SAST Scan:** ❌ Failed to run\n\n';
+          }
+
+          // Read Safety results
+          try {
+            const safetyData = JSON.parse(fs.readFileSync('safety-report.json', 'utf8'));
+            const vulnCount = safetyData.vulnerabilities ? safetyData.vulnerabilities.length : 0;
+
+            comment += `**Safety Dependency Scan:**\n`;
+            comment += `- Vulnerabilities found: ${vulnCount}\n`;
+            comment += vulnCount > 0 ? '⚠️ Review required\n\n' : '✅ Passed\n\n';
+          } catch (e) {
+            comment += '**Safety Dependency Scan:** ❌ Failed to run\n\n';
+          }
+
+          comment += '📋 Detailed reports are available in the workflow artifacts.';
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  build-validation:
+    runs-on: ubuntu-latest
+    needs: [test, security-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Validate application startup
+      run: |
+        pip install -r requirements.txt
+        
+        # Set minimal environment for startup test
+        export TESTING=true
+        export DATABASE_URL=sqlite+aiosqlite:///./test.db
+        export WEAVIATE_URL=http://localhost:8080
+        export REDIS_URL=redis://localhost:6379
+        
+        # Test application import and basic startup
+        python -c "
+        import sys
+        sys.path.append('app')
+        try:
+            from app.main import app
+            print('✅ Application imports successfully')
+        except Exception as e:
+            print(f'❌ Application import failed: {e}')
+            sys.exit(1)
+        "
+
+    - name: Validate API documentation
+      run: |
+        pip install -r requirements.txt
+        
+        # Generate OpenAPI schema
+        python -c "
+        import sys
+        sys.path.append('app')
+        import os
+        os.environ['TESTING'] = 'true'
+        os.environ['DATABASE_URL'] = 'sqlite+aiosqlite:///./test.db'
+        
+        try:
+            from app.main import app
+            schema = app.openapi()
+            print(f'✅ OpenAPI schema generated with {len(schema.get(\"paths\", {}))} endpoints')
+        except Exception as e:
+            print(f'❌ OpenAPI schema generation failed: {e}')
+            sys.exit(1)
+        "
+
+  notify-status:
+    runs-on: ubuntu-latest
+    needs: [test, security-scan, build-validation]
+    if: always()
+    
+    steps:
+    - name: Notify build status
+      run: |
+        if [[ "${{ needs.test.result }}" == "success" && "${{ needs.security-scan.result }}" == "success" ]]; then
+          echo "✅ All CI checks passed successfully!"
+        else
+          echo "❌ Some CI checks failed:"
+          echo "  - Tests: ${{ needs.test.result }}"
+          echo "  - Security: ${{ needs.security-scan.result }}"
+          echo "  - Build: ${{ needs.build-validation.result }}"
+        fi

@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional, Union
 from enum import Enum
 
 from fastapi import HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class ErrorCode(str, Enum):
@@ -89,7 +89,7 @@ class ErrorSeverity(str, Enum):
 
 class ServiceStatus(BaseModel):
     """Model for representing service availability status."""
-    
+
     service_name: str = Field(..., description="Name of the service")
     status: str = Field(..., description="Service status (available, degraded, unavailable)")
     fallback_available: bool = Field(..., description="Whether fallback functionality is available")
@@ -98,7 +98,7 @@ class ServiceStatus(BaseModel):
 
 class ValidationErrorDetail(BaseModel):
     """Detailed validation error information."""
-    
+
     field: str = Field(..., description="Field that failed validation")
     message: str = Field(..., description="Validation error message")
     invalid_value: Any = Field(None, description="The invalid value that was provided")
@@ -136,8 +136,8 @@ class ErrorResponse(BaseModel):
     processing_step: Optional[str] = Field(None, description="Processing step where error occurred")
     processing_progress: Optional[float] = Field(None, description="Processing progress when error occurred (0.0-1.0)")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": False,
                 "error_code": "GREMLINS_6001",
@@ -162,6 +162,7 @@ class ErrorResponse(BaseModel):
                 "processing_progress": 0.3
             }
         }
+    )
 
 
 class GremlinsAIException(HTTPException):
