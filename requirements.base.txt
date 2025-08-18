@@ -1,4 +1,7 @@
 # gremlinsAI Backend Dependencies
+# NOTE: requirements.base.txt is legacy. Use requirements.txt (core) and requirements.extras.txt (optional) with
+# constraints/win-py311.txt for pinning. This file is retained temporarily for reference and will be removed in a future cleanup.
+
 # Production-ready versions for Phase 1 & Phase 2
 
 # FastAPI and Server
