@@ -163,8 +163,168 @@ class CollaborationService:
         self.ai_agent = ProductionAgent()
         
         logger.info("CollaborationService initialized with real-time capabilities")
-    
-    async def create_session(self, document_id: str, initial_content: str = "", 
+
+    async def join_document_session(
+        self,
+        document_id: str,
+        user_id: str,
+        connection_id: str,
+        display_name: str
+    ) -> bool:
+        """
+        Join a collaborative document editing session for real-time collaboration.
+
+        Args:
+            document_id: Document identifier
+            user_id: User identifier
+            connection_id: WebSocket connection identifier
+            display_name: User display name
+
+        Returns:
+            True if successfully joined, False otherwise
+        """
+        try:
+            # Create or get existing session
+            session = None
+            for s in self.active_sessions.values():
+                if s.document_id == document_id:
+                    session = s
+                    break
+
+            if not session:
+                session = await self.create_session(document_id, "", user_id)
+
+            # Add participant if not already present
+            if user_id not in session.participants:
+                participant = CollaborationParticipant(
+                    participant_id=user_id,
+                    display_name=display_name,
+                    participant_type=ParticipantType.HUMAN_USER,
+                    connection_id=connection_id,
+                    joined_at=datetime.utcnow(),
+                    last_activity=datetime.utcnow(),
+                    status=ParticipantStatus.ACTIVE,
+                    cursor_position=0,
+                    selection_range=(0, 0),
+                    permissions=["read", "write", "comment"]
+                )
+                session.participants[user_id] = participant
+                self.session_participants[session.session_id].add(user_id)
+
+            session.last_activity = datetime.utcnow()
+            self.metrics["total_participants"] = sum(len(p) for p in self.session_participants.values())
+
+            logger.info(f"User {user_id} joined document session {document_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error joining document session {document_id}: {e}")
+            return False
+
+    async def leave_document_session(
+        self,
+        document_id: str,
+        user_id: str,
+        connection_id: str
+    ):
+        """
+        Leave a collaborative document editing session.
+
+        Args:
+            document_id: Document identifier
+            user_id: User identifier
+            connection_id: WebSocket connection identifier
+        """
+        try:
+            # Find session by document_id
+            session = None
+            for s in self.active_sessions.values():
+                if s.document_id == document_id:
+                    session = s
+                    break
+
+            if session and user_id in session.participants:
+                # Remove participant
+                del session.participants[user_id]
+                self.session_participants[session.session_id].discard(user_id)
+
+                # Clean up empty session
+                if not session.participants:
+                    del self.active_sessions[session.session_id]
+                    if session.session_id in self.session_participants:
+                        del self.session_participants[session.session_id]
+                    logger.info(f"Document session {document_id} cleaned up (empty)")
+                else:
+                    session.last_activity = datetime.utcnow()
+
+                self.metrics["active_sessions"] = len(self.active_sessions)
+                self.metrics["total_participants"] = sum(len(p) for p in self.session_participants.values())
+
+            logger.info(f"User {user_id} left document session {document_id}")
+
+        except Exception as e:
+            logger.error(f"Error leaving document session {document_id}: {e}")
+
+    async def handle_document_edit(
+        self,
+        document_id: str,
+        user_id: str,
+        edit_data: Dict[str, Any],
+        connection_id: str
+    ):
+        """
+        Handle a document edit operation with operational transform.
+
+        Args:
+            document_id: Document identifier
+            user_id: User making the edit
+            edit_data: Edit operation data
+            connection_id: WebSocket connection identifier
+        """
+        try:
+            # Find session by document_id
+            session = None
+            for s in self.active_sessions.values():
+                if s.document_id == document_id:
+                    session = s
+                    break
+
+            if not session:
+                logger.error(f"Document session {document_id} not found")
+                return
+
+            # Extract edit operation
+            operation_data = edit_data.get("operation", {})
+            operation = DocumentOperation(
+                operation_id=str(uuid.uuid4()),
+                operation_type=operation_data.get("type", "insert"),
+                position=operation_data.get("position", 0),
+                content=operation_data.get("content"),
+                length=operation_data.get("length"),
+                author_id=user_id,
+                timestamp=datetime.utcnow()
+            )
+
+            # Apply operational transform (simplified)
+            transformed_operation = await self._apply_simple_operational_transform(session, operation)
+
+            # Apply operation to document
+            if transformed_operation:
+                await self._apply_operation_to_document_content(session, transformed_operation)
+
+                # Add to operation history
+                session.operation_history.append(transformed_operation)
+                session.last_activity = datetime.utcnow()
+
+                # Update metrics
+                self.metrics["operations_processed"] += 1
+
+                logger.info(f"Document edit applied: {document_id} by {user_id}")
+
+        except Exception as e:
+            logger.error(f"Error handling document edit for {document_id}: {e}")
+
+    async def create_session(self, document_id: str, initial_content: str = "",
                            creator_id: str = None) -> CollaborationSession:
         """Create a new collaboration session."""
         session_id = str(uuid.uuid4())

@@ -547,27 +547,49 @@ class RetrievalService:
     ) -> List[Dict[str, Any]]:
         """Execute optimized semantic vector search with performance enhancements."""
         try:
-            # Performance optimization: Check query cache first
-            cache_key = f"semantic_{hash(query)}_{hash(str(config.__dict__))}_{hash(str(filters))}"
-            if self._cache and cache_key in self._query_cache:
+            # Performance optimization: Check distributed cache first
+            from app.core.caching_service import caching_service
+
+            cached_results = await caching_service.get_vector_search_results(
+                query=query,
+                filters=filters or {},
+                limit=config.limit
+            )
+            if cached_results is not None:
                 logger.debug(f"Cache hit for semantic search: {query[:50]}...")
-                return self._query_cache[cache_key]
+                return cached_results
 
             collection = self.client.collections.get("DocumentChunk")
 
-            # Build optimized where filter
-            where_filter = self._build_where_filter(config, filters)
+            # Build optimized where filter with pre-filtering for performance
+            where_filter = self._build_optimized_where_filter(config, filters)
 
-            # Optimized semantic search with performance tuning
-            response = collection.query.near_text(
-                query=query,
-                limit=min(config.limit, 100),  # Cap limit for better performance
-                offset=config.offset,
-                where=where_filter,
-                return_metadata=["score", "distance"],
-                # Performance optimization: Use certainty threshold for faster filtering
-                certainty=config.min_relevance_score if config.min_relevance_score > 0 else None
-            )
+            # Performance optimization: Use hybrid search for better results
+            if config.enable_hybrid_search:
+                response = collection.query.hybrid(
+                    query=query,
+                    limit=min(config.limit, 50),  # Reduced limit for hybrid search
+                    offset=config.offset,
+                    where=where_filter,
+                    return_metadata=["score", "distance", "explain_score"],
+                    alpha=0.7  # Balance between vector and keyword search
+                )
+            else:
+                # Optimized semantic search with performance tuning
+                response = collection.query.near_text(
+                    query=query,
+                    limit=min(config.limit, 100),  # Cap limit for better performance
+                    offset=config.offset,
+                    where=where_filter,
+                    return_metadata=["score", "distance"],
+                    # Performance optimization: Use certainty threshold for faster filtering
+                    certainty=config.min_relevance_score if config.min_relevance_score > 0 else None,
+                    # Additional performance optimizations
+                    move_to={
+                        "concepts": [query],
+                        "force": 0.85
+                    } if len(query.split()) > 3 else None
+                )
 
             # Convert to standard format with performance optimization
             results = []
@@ -589,15 +611,15 @@ class RetrievalService:
                 }
                 results.append(result)
 
-            # Cache results for future use
-            if self._cache and len(results) > 0:
-                self._query_cache[cache_key] = results
-                # Limit cache size to prevent memory issues
-                if len(self._query_cache) > 1000:
-                    # Remove oldest entries (LRU-like behavior)
-                    oldest_keys = list(self._query_cache.keys())[:100]
-                    for key in oldest_keys:
-                        del self._query_cache[key]
+            # Cache results in distributed cache for better performance
+            if len(results) > 0:
+                await caching_service.set_vector_search_results(
+                    query=query,
+                    filters=filters or {},
+                    limit=config.limit,
+                    results=results,
+                    ttl=600  # 10 minutes cache
+                )
 
             logger.debug(f"Optimized semantic search returned {len(results)} results")
             return results
@@ -721,18 +743,106 @@ class RetrievalService:
             logger.info("Auto-selecting hybrid search strategy")
             return self._hybrid_search(query, config, filters)
 
-    def _build_where_filter(
+    def _build_optimized_where_filter(
         self,
         config: SearchConfig,
         additional_filters: Optional[Dict[str, Any]] = None
     ) -> Optional[Filter]:
-        """Build optimized Weaviate where filter with caching for better P99 latency."""
+        """Build highly optimized Weaviate where filter with pre-filtering for 1000+ QPS."""
         # Create cache key for filter reuse
         filter_key = self._create_filter_cache_key(config, additional_filters)
 
         # Check cache first for performance optimization
         if filter_key in self._filter_cache:
             return self._filter_cache[filter_key]
+
+        # Build optimized filter with pre-filtering strategy
+        filter_conditions = []
+
+        # Performance optimization: Add most selective filters first
+        if additional_filters:
+            # Sort filters by selectivity (most selective first)
+            sorted_filters = self._sort_filters_by_selectivity(additional_filters)
+
+            for key, value in sorted_filters.items():
+                if key == "document_id" and value:
+                    # Most selective filter - document ID
+                    filter_conditions.append(
+                        Filter.by_property("documentId").equal(value)
+                    )
+                elif key == "document_type" and value:
+                    # Highly selective - document type
+                    filter_conditions.append(
+                        Filter.by_property("documentType").equal(value)
+                    )
+                elif key == "created_after" and value:
+                    # Time-based filtering for recent documents
+                    filter_conditions.append(
+                        Filter.by_property("createdAt").greater_than(value)
+                    )
+                elif key == "chunk_size_min" and value:
+                    # Size-based pre-filtering
+                    filter_conditions.append(
+                        Filter.by_property("chunkSize").greater_than(value)
+                    )
+
+        # Combine filters efficiently
+        if len(filter_conditions) == 0:
+            where_filter = None
+        elif len(filter_conditions) == 1:
+            where_filter = filter_conditions[0]
+        else:
+            # Use AND for multiple conditions (most restrictive)
+            where_filter = filter_conditions[0]
+            for condition in filter_conditions[1:]:
+                where_filter = where_filter & condition
+
+        # Cache the filter for reuse
+        self._filter_cache[filter_key] = where_filter
+
+        # Limit cache size
+        if len(self._filter_cache) > 500:
+            # Remove oldest entries
+            oldest_keys = list(self._filter_cache.keys())[:50]
+            for key in oldest_keys:
+                del self._filter_cache[key]
+
+        return where_filter
+
+    def _sort_filters_by_selectivity(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+        """Sort filters by selectivity (most selective first) for optimal performance."""
+        # Define selectivity order (most selective first)
+        selectivity_order = [
+            "document_id",      # Most selective
+            "document_type",    # Highly selective
+            "user_id",         # Moderately selective
+            "created_after",   # Time-based
+            "chunk_size_min",  # Size-based
+            "tags",           # Tag-based
+        ]
+
+        sorted_filters = {}
+
+        # Add filters in selectivity order
+        for key in selectivity_order:
+            if key in filters and filters[key] is not None:
+                sorted_filters[key] = filters[key]
+
+        # Add any remaining filters
+        for key, value in filters.items():
+            if key not in sorted_filters and value is not None:
+                sorted_filters[key] = value
+
+        return sorted_filters
+
+    def _build_where_filter(
+        self,
+        config: SearchConfig,
+        additional_filters: Optional[Dict[str, Any]] = None
+    ) -> Optional[Filter]:
+        """Build optimized Weaviate where filter with caching for better P99 latency."""
+        # Use the optimized version for better performance
+        return self._build_optimized_where_filter(config, additional_filters)
 
         filters = []
 

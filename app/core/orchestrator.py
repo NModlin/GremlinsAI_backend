@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional, Union
 from enum import Enum
 from dataclasses import dataclass
 from app.core.multi_agent import multi_agent_orchestrator
-from app.core.rag_system import rag_system
+from app.core.rag_system import production_rag_system
 
 logger = logging.getLogger(__name__)
 
@@ -365,13 +365,24 @@ class EnhancedOrchestrator:
         from app.database.database import AsyncSessionLocal
         
         async with AsyncSessionLocal() as db:
-            rag_result = await rag_system.retrieve_and_generate(
-                db=db,
+            # Use the new ProductionRAGSystem
+            rag_result = await production_rag_system.generate_response(
                 query=payload.get("query", ""),
-                search_limit=payload.get("search_limit", 5),
-                score_threshold=payload.get("score_threshold", 0.1),
-                use_multi_agent=payload.get("use_multi_agent", False)
+                context_limit=payload.get("search_limit", 5),
+                certainty_threshold=payload.get("score_threshold", 0.7),
+                conversation_id=payload.get("conversation_id")
             )
+
+            # Convert to expected format for backward compatibility
+            rag_result = {
+                "query": payload.get("query", ""),
+                "response": rag_result.answer,
+                "sources": rag_result.sources,
+                "confidence": rag_result.confidence,
+                "context_used": rag_result.context_used,
+                "query_time": rag_result.query_time_ms,
+                "timestamp": rag_result.timestamp
+            }
             
             return {
                 "query": payload.get("query", ""),

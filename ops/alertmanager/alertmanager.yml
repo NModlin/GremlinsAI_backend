@@ -1,0 +1,290 @@
+# AlertManager Configuration for GremlinsAI
+# Phase 4, Task 4.2: Monitoring & Observability
+
+global:
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alerts@gremlinsai.com'
+  smtp_auth_username: 'alerts@gremlinsai.com'
+  smtp_auth_password: 'your-smtp-password'
+  smtp_require_tls: true
+
+# Templates for alert notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Route configuration
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'web.hook'
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 0s
+      repeat_interval: 5m
+      routes:
+        # API down alerts
+        - match:
+            alertname: ApiDown
+          receiver: 'api-down-alerts'
+          group_wait: 0s
+          repeat_interval: 1m
+        
+        # High error rate alerts
+        - match:
+            alertname: HighApiErrorRate
+          receiver: 'error-rate-alerts'
+          repeat_interval: 10m
+        
+        # Memory alerts
+        - match:
+            alertname: HostOutOfMemory
+          receiver: 'memory-alerts'
+          repeat_interval: 15m
+        
+        # Security alerts
+        - match:
+            component: security
+          receiver: 'security-alerts'
+          group_wait: 0s
+          repeat_interval: 5m
+
+    # Warning alerts - less frequent notifications
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 30s
+      repeat_interval: 2h
+
+    # Business metric alerts
+    - match:
+        component: llm
+      receiver: 'llm-alerts'
+      repeat_interval: 30m
+    
+    - match:
+        component: multi-agent
+      receiver: 'multi-agent-alerts'
+      repeat_interval: 30m
+
+    # System alerts
+    - match:
+        component: system
+      receiver: 'system-alerts'
+      repeat_interval: 1h
+
+# Inhibition rules - suppress certain alerts when others are firing
+inhibit_rules:
+  # Suppress warning alerts when critical alerts are firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
+
+  # Suppress individual service alerts when API is down
+  - source_match:
+      alertname: 'ApiDown'
+    target_match_re:
+      alertname: '(HighApiLatency|HighApiErrorRate|.*Failures)'
+    equal: ['cluster']
+
+  # Suppress memory prediction when actual memory alert is firing
+  - source_match:
+      alertname: 'HostOutOfMemory'
+    target_match:
+      alertname: 'HostOutOfMemoryPredicted'
+    equal: ['instance']
+
+# Receivers - notification destinations
+receivers:
+  # Default webhook receiver
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook'
+        send_resolved: true
+
+  # Critical alerts - multiple channels
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'sre-team@gremlinsai.com'
+        subject: '🚨 CRITICAL: {{ .GroupLabels.alertname }} - {{ .GroupLabels.service }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Severity: {{ .Labels.severity }}
+          Service: {{ .Labels.service }}
+          Instance: {{ .Labels.instance }}
+          
+          Runbook: {{ .Annotations.runbook_url }}
+          Dashboard: {{ .Annotations.dashboard_url }}
+          
+          Started: {{ .StartsAt }}
+          {{ end }}
+        headers:
+          Priority: 'high'
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts-critical'
+        title: '🚨 Critical Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          
+          {{ .Annotations.description }}
+          
+          *Service:* {{ .Labels.service }}
+          *Severity:* {{ .Labels.severity }}
+          *Instance:* {{ .Labels.instance }}
+          
+          <{{ .Annotations.runbook_url }}|Runbook> | <{{ .Annotations.dashboard_url }}|Dashboard>
+          {{ end }}
+        send_resolved: true
+
+    pagerduty_configs:
+      - routing_key: 'your-pagerduty-integration-key'
+        description: '{{ .GroupLabels.alertname }} - {{ .GroupLabels.service }}'
+        severity: 'critical'
+
+  # API down alerts - immediate escalation
+  - name: 'api-down-alerts'
+    email_configs:
+      - to: 'oncall@gremlinsai.com'
+        subject: '🔥 API DOWN: GremlinsAI Service Unavailable'
+        body: |
+          The GremlinsAI API is currently down and unavailable.
+          
+          This requires immediate attention.
+          
+          {{ range .Alerts }}
+          Instance: {{ .Labels.instance }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+        headers:
+          Priority: 'urgent'
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts-critical'
+        title: '🔥 API DOWN'
+        text: 'GremlinsAI API is down! @channel'
+        send_resolved: true
+
+  # Error rate alerts
+  - name: 'error-rate-alerts'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts-api'
+        title: '⚠️ High Error Rate'
+        text: |
+          {{ range .Alerts }}
+          Error rate is {{ .Annotations.description }}
+          
+          <{{ .Annotations.dashboard_url }}|View Dashboard>
+          {{ end }}
+
+  # Memory alerts
+  - name: 'memory-alerts'
+    email_configs:
+      - to: 'infrastructure@gremlinsai.com'
+        subject: '💾 Memory Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          {{ .Annotations.description }}
+          
+          Instance: {{ .Labels.instance }}
+          Current Memory Usage: {{ .Annotations.current_usage }}
+          
+          Action Required: {{ .Annotations.runbook_url }}
+          {{ end }}
+
+  # Security alerts
+  - name: 'security-alerts'
+    email_configs:
+      - to: 'security@gremlinsai.com'
+        subject: '🔒 Security Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Security Event: {{ .Annotations.summary }}
+          
+          {{ .Annotations.description }}
+          
+          Event Type: {{ .Labels.event_type }}
+          Severity: {{ .Labels.severity }}
+          
+          Immediate investigation required.
+          {{ end }}
+        headers:
+          Priority: 'high'
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#security-alerts'
+        title: '🔒 Security Alert'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          
+          {{ .Annotations.description }}
+          {{ end }}
+
+  # Warning alerts
+  - name: 'warning-alerts'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts-warning'
+        title: '⚠️ Warning: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          {{ .Annotations.summary }}
+          
+          Service: {{ .Labels.service }}
+          {{ end }}
+
+  # LLM alerts
+  - name: 'llm-alerts'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts-llm'
+        title: '🤖 LLM Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          {{ .Annotations.summary }}
+          
+          Provider: {{ .Labels.provider }}
+          Model: {{ .Labels.model }}
+          {{ end }}
+
+  # Multi-agent alerts
+  - name: 'multi-agent-alerts'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts-agents'
+        title: '👥 Multi-Agent Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          {{ .Annotations.summary }}
+          
+          Workflow: {{ .Labels.workflow_type }}
+          {{ end }}
+
+  # System alerts
+  - name: 'system-alerts'
+    email_configs:
+      - to: 'infrastructure@gremlinsai.com'
+        subject: '🖥️ System Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          {{ .Annotations.summary }}
+          
+          {{ .Annotations.description }}
+          
+          Instance: {{ .Labels.instance }}
+          Component: {{ .Labels.component }}
+          {{ end }}

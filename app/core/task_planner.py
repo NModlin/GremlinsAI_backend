@@ -30,6 +30,13 @@ from app.tools import get_tool_registry
 logger = logging.getLogger(__name__)
 
 
+def enum_serializer(obj):
+    """Custom JSON serializer for Enum objects."""
+    if isinstance(obj, Enum):
+        return obj.value
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
 class PlanStepType(Enum):
     """Types of plan steps."""
     RESEARCH = "research"
@@ -422,8 +429,8 @@ UPDATED PLAN:"""
             
             # Create adjustment prompt
             prompt = self.adjustment_prompt.format(
-                original_plan=json.dumps(asdict(plan), indent=2),
-                execution_status=json.dumps(execution_status, indent=2),
+                original_plan=json.dumps(asdict(plan), indent=2, default=enum_serializer),
+                execution_status=json.dumps(execution_status, indent=2, default=enum_serializer),
                 adjustment_reason=adjustment_reason
             )
             

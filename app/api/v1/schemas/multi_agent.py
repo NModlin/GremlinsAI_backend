@@ -18,23 +18,30 @@ class AgentType(str, Enum):
     COORDINATOR = "coordinator"
 
 class MultiAgentRequest(BaseModel):
-    """Schema for multi-agent workflow requests."""
-    input: str = Field(..., description="The query or task to be processed")
+    """Schema for multi-agent workflow requests with enhanced security validation."""
+    input: str = Field(
+        ...,
+        description="The query or task to be processed",
+        min_length=1,
+        max_length=5000
+    )
     workflow_type: WorkflowType = Field(
         default=WorkflowType.SIMPLE_RESEARCH,
         description="Type of workflow to execute"
     )
     conversation_id: Optional[str] = Field(
-        None, 
-        description="ID of existing conversation for context"
+        None,
+        description="ID of existing conversation for context",
+        pattern=r'^[a-zA-Z0-9\-_]{1,50}$'
     )
     save_conversation: bool = Field(
-        True, 
+        True,
         description="Whether to save this interaction to conversation history"
     )
     preferred_agents: Optional[List[AgentType]] = Field(
         None,
-        description="Specific agents to use (if not specified, system will choose)"
+        description="Specific agents to use (if not specified, system will choose)",
+        max_items=10
     )
     context_depth: int = Field(
         default=10,
@@ -42,6 +49,63 @@ class MultiAgentRequest(BaseModel):
         le=50,
         description="Number of previous messages to include as context"
     )
+
+    @field_validator('input')
+    @classmethod
+    def validate_input(cls, v):
+        """Enhanced input validation with security checks."""
+        if not v or not v.strip():
+            raise ValueError('Input cannot be empty')
+
+        # Security validation for potential injection attacks
+        dangerous_patterns = [
+            '<script', 'javascript:', 'data:text/html', 'vbscript:',
+            'onload=', 'onerror=', 'onclick=', 'onmouseover=',
+            'eval(', 'setTimeout(', 'setInterval(',
+            'document.write', 'innerHTML', 'outerHTML'
+        ]
+
+        v_lower = v.lower()
+        for pattern in dangerous_patterns:
+            if pattern in v_lower:
+                from app.core.logging_config import log_input_validation_failure
+                log_input_validation_failure(
+                    field_name="input",
+                    field_value=v,
+                    validation_error=f"Potential XSS pattern detected: {pattern}"
+                )
+                raise ValueError('Input contains potentially dangerous patterns')
+
+        # Check for command injection patterns
+        cmd_patterns = [';', '&&', '||', '`', '$(', '${', '|']
+        if any(pattern in v for pattern in cmd_patterns):
+            from app.core.logging_config import log_input_validation_failure
+            log_input_validation_failure(
+                field_name="input",
+                field_value=v,
+                validation_error="Potential command injection pattern detected"
+            )
+            raise ValueError('Input contains potentially dangerous command patterns')
+
+        return v.strip()
+
+    @field_validator('conversation_id')
+    @classmethod
+    def validate_conversation_id(cls, v):
+        """Validate conversation ID format."""
+        if v is not None:
+            if not v.strip():
+                raise ValueError('Conversation ID cannot be empty string')
+            # Additional security check for path traversal
+            if '../' in v or '..\\' in v:
+                from app.core.logging_config import log_input_validation_failure
+                log_input_validation_failure(
+                    field_name="conversation_id",
+                    field_value=v,
+                    validation_error="Path traversal pattern detected"
+                )
+                raise ValueError('Invalid conversation ID format')
+        return v
     metadata: Optional[Dict[str, Any]] = Field(
         None,
         description="Additional metadata for the request"

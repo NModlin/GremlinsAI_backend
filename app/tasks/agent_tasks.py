@@ -122,7 +122,7 @@ async def _execute_multi_agent_workflow(workflow_type: str, input_data: str,
             logger.error(f"Multi-agent workflow execution failed: {str(e)}")
             raise
 
-@task(bind=True, name="agent_tasks.run_enhanced_agent_chat")
+@celery_app.task(bind=True, name="agent_tasks.run_enhanced_agent_chat")
 def run_enhanced_agent_chat_task(self, input_data: str, conversation_id: Optional[str] = None,
                                 use_multi_agent: bool = False, use_rag: bool = False,
                                 save_conversation: bool = True) -> Dict[str, Any]:
@@ -255,7 +255,7 @@ async def _execute_enhanced_chat(input_data: str, conversation_id: Optional[str]
             logger.error(f"Enhanced chat execution failed: {str(e)}")
             raise
 
-@task(bind=True, name="agent_tasks.batch_process_conversations")
+@celery_app.task(bind=True, name="agent_tasks.batch_process_conversations")
 def batch_process_conversations_task(self, conversation_ids: List[str],
                                    operation: str) -> Dict[str, Any]:
     """

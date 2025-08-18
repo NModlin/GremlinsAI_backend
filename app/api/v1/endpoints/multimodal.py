@@ -44,6 +44,204 @@ def get_multimodal_service() -> MultiModalService:
     return MultiModalService()
 
 
+@router.post("/upload")
+async def upload_multimodal_content(
+    files: List[UploadFile] = File(...),
+    fusion_strategy: str = Form("concatenate"),
+    timeout: int = Form(300)
+):
+    """
+    Upload and process multiple multimodal files with background processing.
+
+    This endpoint implements the unified multimodal processing pipeline with:
+    - Audio transcription using Whisper (>95% accuracy)
+    - Video processing with FFmpeg and frame extraction
+    - Image processing with CLIP embeddings
+    - Cross-modal embeddings for unified search
+    - Weaviate integration for content indexing
+
+    Returns 202 Accepted with a job ID for tracking processing status.
+    """
+    try:
+        # Validate files
+        if not files:
+            raise HTTPException(status_code=422, detail="At least one file is required")
+
+        # Validate file types
+        supported_types = {
+            'audio': ['audio/wav', 'audio/mp3', 'audio/m4a', 'audio/flac', 'audio/ogg'],
+            'video': ['video/mp4', 'video/avi', 'video/mov', 'video/mkv'],
+            'image': ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp']
+        }
+
+        all_supported = []
+        for category in supported_types.values():
+            all_supported.extend(category)
+
+        for file in files:
+            if file.content_type not in all_supported:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Unsupported file type: {file.content_type}. Supported types: {all_supported}"
+                )
+
+        # Start background processing task
+        from app.tasks.multimodal_tasks import process_multimodal_content_task
+
+        # Prepare file data for background processing
+        file_data_list = []
+        for file in files:
+            content = await file.read()
+            file_data_list.append({
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "content": content,
+                "size": len(content)
+            })
+
+        # Start the background task
+        task_result = process_multimodal_content_task.delay(
+            file_data_list=file_data_list,
+            fusion_strategy=fusion_strategy,
+            timeout=timeout
+        )
+
+        # Return 202 Accepted with job information
+        return {
+            "status": "accepted",
+            "message": "Multimodal content upload accepted for processing",
+            "job_id": task_result.id,
+            "files_count": len(files),
+            "fusion_strategy": fusion_strategy,
+            "status_url": f"/api/v1/multimodal/status/{task_result.id}",
+            "estimated_processing_time": f"{len(files) * 30} seconds",
+            "submitted_at": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Multimodal upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+@router.get("/status/{job_id}")
+async def get_multimodal_processing_status(job_id: str):
+    """
+    Get the processing status of a multimodal processing job.
+
+    Args:
+        job_id: The Celery task ID returned from multimodal upload
+
+    Returns:
+        Current status and progress information
+    """
+    try:
+        from app.core.celery_app import celery_app
+
+        # Get task result
+        task_result = celery_app.AsyncResult(job_id)
+
+        if task_result.state == 'PENDING':
+            response = {
+                "job_id": job_id,
+                "status": "pending",
+                "message": "Task is waiting to be processed",
+                "progress": 0,
+                "stage": "queued"
+            }
+        elif task_result.state == 'PROGRESS':
+            meta = task_result.info or {}
+            response = {
+                "job_id": job_id,
+                "status": "processing",
+                "message": meta.get("status", "Processing multimodal content"),
+                "progress": meta.get("progress", 0),
+                "stage": meta.get("stage", "unknown"),
+                "files_processed": meta.get("files_processed", 0),
+                "total_files": meta.get("total_files", 0)
+            }
+        elif task_result.state == 'SUCCESS':
+            result = task_result.result or {}
+            response = {
+                "job_id": job_id,
+                "status": "completed",
+                "message": "Multimodal processing completed successfully",
+                "progress": 100,
+                "stage": "completed",
+                "result": {
+                    "files_processed": result.get("files_processed", 0),
+                    "successful_files": result.get("successful_files", 0),
+                    "failed_files": result.get("failed_files", 0),
+                    "fusion_result": result.get("fusion_result"),
+                    "cross_modal_embeddings": result.get("cross_modal_embeddings"),
+                    "weaviate_ids": result.get("weaviate_ids", []),
+                    "processing_time": result.get("processing_time", 0)
+                }
+            }
+        elif task_result.state == 'FAILURE':
+            meta = task_result.info or {}
+            response = {
+                "job_id": job_id,
+                "status": "failed",
+                "message": "Multimodal processing failed",
+                "progress": 0,
+                "stage": "error",
+                "error": meta.get("error", str(task_result.info)) if task_result.info else "Unknown error"
+            }
+        else:
+            response = {
+                "job_id": job_id,
+                "status": "unknown",
+                "message": f"Unknown task state: {task_result.state}",
+                "progress": 0,
+                "stage": "unknown"
+            }
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error getting multimodal processing status for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get processing status: {str(e)}")
+
+
+@router.post("/search")
+async def search_multimodal_content(
+    query: str = Form(...),
+    media_types: Optional[List[str]] = Form(None),
+    limit: int = Form(10)
+):
+    """
+    Perform cross-modal search using text query to find relevant media content.
+
+    This endpoint demonstrates the cross-modal search capabilities where
+    text queries can find relevant images, videos, or audio content.
+    """
+    try:
+        # Initialize multimodal processor
+        from app.core.multimodal import MultiModalProcessor
+        processor = MultiModalProcessor()
+
+        # Perform cross-modal search
+        results = await processor.search_cross_modal(
+            query=query,
+            media_types=media_types,
+            limit=limit
+        )
+
+        return {
+            "query": query,
+            "media_types_searched": media_types or ["audio", "video", "image"],
+            "results_count": len(results),
+            "results": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Cross-modal search failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
 # Simplified routes for backward compatibility
 @router.post(
     "/audio",

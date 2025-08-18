@@ -1,0 +1,25 @@
+{
+  "overall_score": 0.9230769230769231,
+  "status": "READY",
+  "files_check": {
+    "locust_test": true,
+    "load_runner": true,
+    "metrics_collector": true,
+    "optimizer": true,
+    "report_template": true
+  },
+  "deps_check": {
+    "locust_available": false,
+    "websocket_available": true,
+    "json_available": true,
+    "pathlib_available": true
+  },
+  "config_check": {
+    "test_directory": true,
+    "scripts_directory": true,
+    "docs_directory": true,
+    "locust_config": true
+  },
+  "passed_tests": 12,
+  "total_tests": 13
+}

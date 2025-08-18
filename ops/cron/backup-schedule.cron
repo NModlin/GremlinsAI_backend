@@ -1,0 +1,185 @@
+# GremlinsAI Automated Backup Schedule
+# Phase 4, Task 4.3: Disaster Recovery & Backup
+#
+# This cron configuration provides automated backup scheduling for GremlinsAI
+# components with 6-hour intervals and proper logging.
+#
+# Installation:
+#   sudo crontab -u gremlinsai /path/to/ops/cron/backup-schedule.cron
+#
+# Or add to existing crontab:
+#   crontab -e
+#   # Then copy the relevant lines below
+
+# Environment variables for backup scripts
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+HOME=/home/gremlinsai
+MAILTO=devops@gremlinsai.com
+
+# GremlinsAI backup configuration
+GREMLINSAI_ROOT=/opt/gremlinsai
+S3_BUCKET=gremlinsai-prod-backups
+AWS_REGION=us-east-1
+ENVIRONMENT=prod
+
+# =============================================================================
+# PRODUCTION BACKUP SCHEDULE (Every 6 hours)
+# =============================================================================
+
+# Weaviate backup - Every 6 hours at 15 minutes past the hour
+15 */6 * * * cd $GREMLINSAI_ROOT && ./scripts/backup/backup_weaviate.sh --environment $ENVIRONMENT --bucket $S3_BUCKET --region $AWS_REGION --compress true >> /var/log/gremlinsai/backup_weaviate.log 2>&1
+
+# Redis backup - Every 6 hours at 45 minutes past the hour (offset from Weaviate)
+45 */6 * * * cd $GREMLINSAI_ROOT && ./scripts/backup/backup_redis.sh --environment $ENVIRONMENT --bucket $S3_BUCKET --region $AWS_REGION --type both --compress true >> /var/log/gremlinsai/backup_redis.log 2>&1
+
+# =============================================================================
+# DAILY BACKUP VALIDATION (Every day at 2:30 AM)
+# =============================================================================
+
+# Daily backup validation - Check backup integrity and availability
+30 2 * * * cd $GREMLINSAI_ROOT && ./scripts/validate_backups.sh --environment $ENVIRONMENT --bucket $S3_BUCKET >> /var/log/gremlinsai/backup_validation.log 2>&1
+
+# =============================================================================
+# WEEKLY BACKUP CLEANUP (Every Sunday at 3:00 AM)
+# =============================================================================
+
+# Weekly cleanup of old local backup files (keep 7 days)
+0 3 * * 0 find /opt/gremlinsai/backups -name "*.tar.gz" -mtime +7 -delete >> /var/log/gremlinsai/backup_cleanup.log 2>&1
+
+# Weekly cleanup of old log files (keep 30 days)
+15 3 * * 0 find /var/log/gremlinsai -name "backup_*.log" -mtime +30 -delete >> /var/log/gremlinsai/log_cleanup.log 2>&1
+
+# =============================================================================
+# MONTHLY DR TEST (First Saturday of each month at 2:00 AM)
+# =============================================================================
+
+# Monthly disaster recovery test - Full restoration test in staging environment
+0 2 1-7 * 6 cd $GREMLINSAI_ROOT && ./scripts/monthly_dr_test.sh --environment staging >> /var/log/gremlinsai/dr_test.log 2>&1
+
+# =============================================================================
+# STAGING ENVIRONMENT BACKUP SCHEDULE (Every 12 hours)
+# =============================================================================
+
+# Staging Weaviate backup - Every 12 hours at 30 minutes past the hour
+30 */12 * * * cd $GREMLINSAI_ROOT && ./scripts/backup/backup_weaviate.sh --environment staging --bucket gremlinsai-staging-backups --region $AWS_REGION --compress true >> /var/log/gremlinsai/backup_weaviate_staging.log 2>&1
+
+# Staging Redis backup - Every 12 hours at 0 minutes past the hour
+0 */12 * * * cd $GREMLINSAI_ROOT && ./scripts/backup/backup_redis.sh --environment staging --bucket gremlinsai-staging-backups --region $AWS_REGION --type both --compress true >> /var/log/gremlinsai/backup_redis_staging.log 2>&1
+
+# =============================================================================
+# DEVELOPMENT ENVIRONMENT BACKUP SCHEDULE (Daily)
+# =============================================================================
+
+# Development Weaviate backup - Daily at 1:00 AM
+0 1 * * * cd $GREMLINSAI_ROOT && ./scripts/backup/backup_weaviate.sh --environment dev --bucket gremlinsai-dev-backups --region $AWS_REGION --compress true >> /var/log/gremlinsai/backup_weaviate_dev.log 2>&1
+
+# Development Redis backup - Daily at 1:30 AM
+30 1 * * * cd $GREMLINSAI_ROOT && ./scripts/backup/backup_redis.sh --environment dev --bucket gremlinsai-dev-backups --region $AWS_REGION --type both --compress true >> /var/log/gremlinsai/backup_redis_dev.log 2>&1
+
+# =============================================================================
+# BACKUP MONITORING AND ALERTING
+# =============================================================================
+
+# Hourly backup status check - Monitor for failed backups
+0 * * * * cd $GREMLINSAI_ROOT && ./scripts/check_backup_status.sh --environment $ENVIRONMENT >> /var/log/gremlinsai/backup_monitoring.log 2>&1
+
+# Daily backup report - Generate and send backup status report
+0 8 * * * cd $GREMLINSAI_ROOT && ./scripts/generate_backup_report.sh --environment $ENVIRONMENT --email devops@gremlinsai.com >> /var/log/gremlinsai/backup_reports.log 2>&1
+
+# =============================================================================
+# SYSTEM MAINTENANCE
+# =============================================================================
+
+# Weekly system health check before backups (Every Sunday at 1:00 AM)
+0 1 * * 0 cd $GREMLINSAI_ROOT && ./scripts/system_health_check.sh >> /var/log/gremlinsai/system_health.log 2>&1
+
+# Monthly backup storage usage report (First day of each month at 6:00 AM)
+0 6 1 * * cd $GREMLINSAI_ROOT && ./scripts/backup_storage_report.sh --bucket $S3_BUCKET >> /var/log/gremlinsai/storage_reports.log 2>&1
+
+# =============================================================================
+# EMERGENCY BACKUP PROCEDURES
+# =============================================================================
+
+# The following entries are commented out and should only be enabled
+# during emergency situations or maintenance windows
+
+# Emergency full backup (uncomment and modify time as needed)
+# 0 * * * * cd $GREMLINSAI_ROOT && ./scripts/emergency_backup.sh --environment $ENVIRONMENT --bucket $S3_BUCKET-emergency >> /var/log/gremlinsai/emergency_backup.log 2>&1
+
+# Pre-maintenance backup (uncomment before scheduled maintenance)
+# 0 22 * * * cd $GREMLINSAI_ROOT && ./scripts/pre_maintenance_backup.sh --environment $ENVIRONMENT --bucket $S3_BUCKET >> /var/log/gremlinsai/pre_maintenance_backup.log 2>&1
+
+# =============================================================================
+# NOTES AND BEST PRACTICES
+# =============================================================================
+
+# 1. Backup Schedule Design:
+#    - Production: Every 6 hours (4 backups per day)
+#    - Staging: Every 12 hours (2 backups per day)
+#    - Development: Daily (1 backup per day)
+#
+# 2. Backup Timing:
+#    - Weaviate and Redis backups are offset by 30 minutes to avoid resource conflicts
+#    - Backups are scheduled during low-traffic hours when possible
+#    - DR tests are scheduled for weekends to minimize business impact
+#
+# 3. Retention Policy:
+#    - Local backups: 7 days (cleaned up weekly)
+#    - S3 backups: 30 days (managed by S3 lifecycle policies)
+#    - Log files: 30 days (cleaned up weekly)
+#
+# 4. Monitoring:
+#    - Hourly status checks ensure backup failures are detected quickly
+#    - Daily reports provide visibility into backup operations
+#    - Monthly storage reports help manage costs
+#
+# 5. Recovery Objectives:
+#    - RTO (Recovery Time Objective): < 4 hours
+#    - RPO (Recovery Point Objective): < 1 hour (with 6-hour backup frequency)
+#
+# 6. Security:
+#    - All backup scripts should use IAM roles or secure credential management
+#    - S3 buckets should have appropriate access controls and encryption
+#    - Backup files are compressed and encrypted in transit
+#
+# 7. Testing:
+#    - Monthly DR tests validate backup integrity and restoration procedures
+#    - Quarterly business continuity tests involve all stakeholders
+#    - Annual DR plan reviews ensure procedures remain current
+#
+# 8. Troubleshooting:
+#    - All backup operations are logged with timestamps
+#    - Failed backups trigger alerts through monitoring systems
+#    - Escalation procedures are documented in operational runbooks
+#
+# 9. Maintenance:
+#    - Review and update this cron schedule quarterly
+#    - Adjust backup frequency based on business requirements
+#    - Monitor backup performance and optimize as needed
+#
+# 10. Emergency Contacts:
+#     - Primary: DevOps Team (devops@gremlinsai.com)
+#     - Secondary: Platform Engineering (platform@gremlinsai.com)
+#     - Emergency: On-call Engineer (oncall@gremlinsai.com)
+
+# =============================================================================
+# CRON SCHEDULE REFERENCE
+# =============================================================================
+#
+# Cron format: minute hour day-of-month month day-of-week command
+#
+# Special characters:
+# * - any value
+# , - value list separator
+# - - range of values
+# / - step values
+#
+# Examples:
+# 0 2 * * *     - Daily at 2:00 AM
+# 0 */6 * * *   - Every 6 hours
+# 0 2 * * 0     - Every Sunday at 2:00 AM
+# 0 2 1 * *     - First day of every month at 2:00 AM
+# 0 2 1-7 * 6   - First Saturday of every month at 2:00 AM
+#
+# =============================================================================

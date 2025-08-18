@@ -1,0 +1,323 @@
+# Horizontal Pod Autoscaler Configuration for GremlinsAI
+# Phase 3, Task 3.4: Performance Optimization
+#
+# This configuration enables automatic scaling of the GremlinsAI application
+# based on CPU and memory usage, supporting 3-10 replicas with intelligent
+# scaling policies for production workloads.
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gremlinsai-hpa
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: autoscaler
+    version: v1.0.0
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gremlinsai-app
+  
+  # Scaling configuration
+  minReplicas: 3
+  maxReplicas: 10
+  
+  # Metrics for scaling decisions
+  metrics:
+  # CPU-based scaling
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75  # Scale up when CPU > 75%
+  
+  # Memory-based scaling
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80  # Scale up when memory > 80%
+  
+  # Custom metrics for application-specific scaling
+  - type: Pods
+    pods:
+      metric:
+        name: active_connections
+      target:
+        type: AverageValue
+        averageValue: "100"  # Scale up when avg connections > 100 per pod
+  
+  - type: Pods
+    pods:
+      metric:
+        name: request_rate
+      target:
+        type: AverageValue
+        averageValue: "50"   # Scale up when avg requests > 50/sec per pod
+
+  # Scaling behavior configuration
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60  # Wait 60s before scaling up again
+      policies:
+      - type: Percent
+        value: 100  # Scale up by 100% (double) at most
+        periodSeconds: 60
+      - type: Pods
+        value: 2    # Or add 2 pods at most
+        periodSeconds: 60
+      selectPolicy: Min  # Use the more conservative policy
+    
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Wait 5 minutes before scaling down
+      policies:
+      - type: Percent
+        value: 50   # Scale down by 50% at most
+        periodSeconds: 60
+      - type: Pods
+        value: 1    # Or remove 1 pod at most
+        periodSeconds: 60
+      selectPolicy: Min  # Use the more conservative policy
+
+---
+# Vertical Pod Autoscaler for resource optimization
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: gremlinsai-vpa
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: vpa
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gremlinsai-app
+  
+  updatePolicy:
+    updateMode: "Auto"  # Automatically apply recommendations
+  
+  resourcePolicy:
+    containerPolicies:
+    - containerName: gremlinsai
+      minAllowed:
+        cpu: 100m
+        memory: 256Mi
+      maxAllowed:
+        cpu: 2000m
+        memory: 4Gi
+      controlledResources: ["cpu", "memory"]
+
+---
+# PodDisruptionBudget for high availability during scaling
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gremlinsai-pdb
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: disruption-budget
+spec:
+  minAvailable: 2  # Always keep at least 2 pods running
+  selector:
+    matchLabels:
+      app: gremlinsai
+      component: api
+
+---
+# ServiceMonitor for Prometheus metrics collection
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: gremlinsai-metrics
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: gremlinsai
+      component: api
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    honorLabels: true
+
+---
+# Custom metrics for application-specific autoscaling
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-metrics-config
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: metrics
+data:
+  metrics.yaml: |
+    metrics:
+      - name: active_connections
+        description: "Number of active WebSocket connections per pod"
+        type: gauge
+        labels:
+          - pod
+          - namespace
+      
+      - name: request_rate
+        description: "HTTP requests per second per pod"
+        type: counter
+        labels:
+          - pod
+          - namespace
+          - endpoint
+      
+      - name: cache_hit_rate
+        description: "Cache hit rate percentage"
+        type: gauge
+        labels:
+          - cache_type
+          - pod
+      
+      - name: vector_search_latency
+        description: "Vector search query latency in milliseconds"
+        type: histogram
+        labels:
+          - pod
+          - query_type
+      
+      - name: llm_response_time
+        description: "LLM response time in milliseconds"
+        type: histogram
+        labels:
+          - model
+          - provider
+          - pod
+
+---
+# NetworkPolicy for secure scaling
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gremlinsai-scaling-policy
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: gremlinsai
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow traffic from load balancer
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8000
+  
+  # Allow metrics collection
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  
+  egress:
+  # Allow outbound to Weaviate
+  - to:
+    - podSelector:
+        matchLabels:
+          app: weaviate
+    ports:
+    - protocol: TCP
+      port: 8080
+  
+  # Allow outbound to Redis
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# Resource quotas for the namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gremlinsai-quota
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: quota
+spec:
+  hard:
+    # Compute resources
+    requests.cpu: "10"      # Total CPU requests
+    requests.memory: "20Gi" # Total memory requests
+    limits.cpu: "20"        # Total CPU limits
+    limits.memory: "40Gi"   # Total memory limits
+    
+    # Object counts
+    pods: "50"              # Maximum pods
+    services: "20"          # Maximum services
+    persistentvolumeclaims: "10"  # Maximum PVCs
+    
+    # Storage
+    requests.storage: "100Gi"  # Total storage requests
+
+---
+# LimitRange for pod resource constraints
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: gremlinsai-limits
+  namespace: gremlinsai
+  labels:
+    app: gremlinsai
+    component: limits
+spec:
+  limits:
+  # Container limits
+  - type: Container
+    default:
+      cpu: "1000m"
+      memory: "2Gi"
+    defaultRequest:
+      cpu: "200m"
+      memory: "512Mi"
+    min:
+      cpu: "100m"
+      memory: "256Mi"
+    max:
+      cpu: "4000m"
+      memory: "8Gi"
+  
+  # Pod limits
+  - type: Pod
+    max:
+      cpu: "8000m"
+      memory: "16Gi"

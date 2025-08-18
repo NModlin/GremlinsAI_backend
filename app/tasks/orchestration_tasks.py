@@ -217,7 +217,7 @@ async def _execute_comprehensive_workflow(workflow_config: Dict[str, Any]) -> Di
             logger.error(f"Comprehensive workflow execution failed: {str(e)}")
             raise
 
-@task(bind=True, name="orchestration_tasks.system_health_check")
+@celery_app.task(bind=True, name="orchestration_tasks.system_health_check")
 def system_health_check_task(self) -> Dict[str, Any]:
     """
     Perform a comprehensive system health check.
@@ -328,7 +328,7 @@ async def _perform_system_health_check() -> Dict[str, Any]:
     
     return health_status
 
-@task(bind=True, name="orchestration_tasks.cleanup_old_data")
+@celery_app.task(bind=True, name="orchestration_tasks.cleanup_old_data")
 def cleanup_old_data_task(self, days_old: int = 30) -> Dict[str, Any]:
     """
     Clean up old data from the system.

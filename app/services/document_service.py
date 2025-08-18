@@ -10,6 +10,7 @@ from datetime import datetime
 
 from app.database.models import Document, DocumentChunk, SearchQuery
 from app.core.vector_store import vector_store
+from app.services.dual_write_service import dual_write_service
 
 logger = logging.getLogger(__name__)
 

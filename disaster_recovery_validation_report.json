@@ -1,0 +1,84 @@
+{
+  "timestamp": 1755507118.4446216,
+  "overall_score": 0.6428571428571429,
+  "dr_status": "NOT_READY",
+  "total_tests": 42,
+  "passed_tests": 27,
+  "failed_tests": 15,
+  "detailed_results": {
+    "backup_scripts": {
+      "weaviate_backup_script_exists": true,
+      "redis_backup_script_exists": true,
+      "weaviate_script_structure": true,
+      "redis_script_structure": true,
+      "backup_script_features": true,
+      "error_handling": true,
+      "logging_implementation": true,
+      "s3_integration": true
+    },
+    "restore_scripts": {
+      "full_restore_script_exists": true,
+      "weaviate_restore_script_exists": true,
+      "redis_restore_script_exists": true,
+      "full_restore_structure": true,
+      "individual_restore_structure": true,
+      "validation_procedures": true,
+      "rollback_capabilities": true,
+      "progress_tracking": true
+    },
+    "documentation": {
+      "dr_plan_exists": true,
+      "recovery_objectives_defined": false,
+      "team_roles_defined": false,
+      "step_by_step_procedures": false,
+      "communication_plan": false,
+      "validation_checklist": false,
+      "contact_information": false,
+      "testing_schedule": false
+    },
+    "runbooks": {
+      "manual_backup_runbook_exists": true,
+      "dr_testing_runbook_exists": false,
+      "manual_backup_procedures": false,
+      "testing_procedures": false,
+      "troubleshooting_guides": false,
+      "escalation_procedures": false,
+      "validation_scripts": false
+    },
+    "automation": {
+      "cron_job_compatibility": true,
+      "kubernetes_cronjob_ready": true,
+      "automated_cleanup": true,
+      "notification_integration": true,
+      "monitoring_integration": false,
+      "configuration_management": false
+    },
+    "workflow_simulation": {
+      "backup_script_syntax": true,
+      "restore_script_syntax": true,
+      "workflow_integration": true,
+      "error_handling_simulation": true,
+      "logging_simulation": true
+    }
+  },
+  "acceptance_criteria": {
+    "automated_backup_system": true,
+    "documented_recovery_procedures": false,
+    "tested_restoration_process": true,
+    "operational_runbooks": false,
+    "rto_under_4_hours": false,
+    "rpo_under_1_hour": false,
+    "monthly_testing": false
+  },
+  "recommendations": [
+    "Complete communication plan in DR documentation",
+    "Add emergency contact information to DR plan",
+    "Add monitoring integration for DR operations",
+    "Address critical DR implementation gaps",
+    "Set up automated backup scheduling (every 6 hours)",
+    "Configure S3 bucket with appropriate lifecycle policies",
+    "Test full DR procedure in staging environment",
+    "Train operations team on DR procedures",
+    "Schedule monthly DR testing"
+  ]
+}

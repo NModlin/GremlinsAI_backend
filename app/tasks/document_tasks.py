@@ -6,11 +6,137 @@ Handles long-running document processing, indexing, and RAG operations.
 import asyncio
 import logging
 import time
+import json
+import uuid
 from typing import Dict, Any, List, Optional
+from datetime import datetime
 from celery import current_app as celery_app
-from app.database.database import AsyncSessionLocal
+from sentence_transformers import SentenceTransformer
 
-logger = logging.getLogger(__name__)
+from app.database.database import AsyncSessionLocal
+from app.database.models import Document, DocumentChunk
+from app.services.chunking_service import DocumentChunker, ChunkingStrategy, ChunkingConfig
+from app.core.config import get_settings
+from app.core.logging_config import get_logger, log_performance, log_security_event
+
+logger = get_logger(__name__)
+settings = get_settings()
+
+
+@celery_app.task(bind=True, name="document_tasks.process_and_index_document")
+def process_and_index_document_task(
+    self,
+    document_data: Dict[str, Any],
+    chunking_config: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Asynchronously process and index a single document with intelligent chunking.
+
+    This task implements the complete document processing pipeline:
+    1. Create document record
+    2. Extract metadata automatically
+    3. Perform intelligent semantic chunking
+    4. Generate vector embeddings for each chunk
+    5. Index chunks and embeddings in Weaviate
+
+    Args:
+        document_data: Dictionary containing document information
+        chunking_config: Optional chunking configuration
+
+    Returns:
+        Dict containing processing results and metadata
+    """
+    start_time = time.time()
+    task_id = self.request.id
+
+    try:
+        # Update task state
+        self.update_state(
+            state='PROGRESS',
+            meta={
+                'status': 'Starting document processing',
+                'stage': 'initialization',
+                'progress': 0
+            }
+        )
+
+        logger.info(f"Starting document processing task {task_id}")
+
+        # Run the async processing function
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        try:
+            result = loop.run_until_complete(
+                _process_and_index_document(
+                    self, document_data, chunking_config, start_time
+                )
+            )
+
+            processing_time = time.time() - start_time
+
+            # Log performance metrics
+            log_performance(
+                operation="document_processing_pipeline",
+                duration_ms=processing_time * 1000,
+                success=True,
+                document_id=result.get("document_id"),
+                chunks_created=result.get("chunks_created", 0),
+                task_id=task_id
+            )
+
+            # Final success state
+            self.update_state(
+                state='SUCCESS',
+                meta={
+                    'status': 'Document processing completed',
+                    'stage': 'completed',
+                    'progress': 100,
+                    'processing_time': processing_time,
+                    'result': result
+                }
+            )
+
+            logger.info(f"Document processing task {task_id} completed in {processing_time:.2f}s")
+            return result
+
+        finally:
+            loop.close()
+
+    except Exception as e:
+        processing_time = time.time() - start_time
+        error_msg = str(e)
+
+        logger.error(f"Document processing task {task_id} failed: {error_msg}")
+
+        # Log security event for processing failures
+        log_security_event(
+            event_type="document_processing_failure",
+            severity="medium",
+            task_id=task_id,
+            error=error_msg,
+            processing_time=processing_time
+        )
+
+        # Update task state to failure
+        self.update_state(
+            state='FAILURE',
+            meta={
+                'status': 'Document processing failed',
+                'stage': 'error',
+                'progress': 0,
+                'error': error_msg,
+                'processing_time': processing_time
+            }
+        )
+
+        return {
+            "success": False,
+            "error": error_msg,
+            "task_id": task_id,
+            "processing_time": processing_time
+        }
+
 
 @celery_app.task(bind=True, name="document_tasks.process_document_batch")
 def process_document_batch_task(self, document_data_list: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -99,6 +225,402 @@ async def _process_document_batch(document_data_list: List[Dict[str, Any]]) -> D
             "results": results,
             "status": "completed"
         }
+
+
+async def _process_and_index_document(
+    task_instance,
+    document_data: Dict[str, Any],
+    chunking_config: Optional[Dict[str, Any]],
+    start_time: float
+) -> Dict[str, Any]:
+    """
+    Async helper function for the complete document processing pipeline.
+
+    Implements the intelligent document processing pipeline with:
+    - Automatic metadata extraction
+    - Semantic chunking with quality assessment
+    - Vector embedding generation
+    - Weaviate indexing with proper schema
+    """
+    async with AsyncSessionLocal() as db:
+        try:
+            # Stage 1: Create document record and extract metadata
+            task_instance.update_state(
+                state='PROGRESS',
+                meta={
+                    'status': 'Creating document record',
+                    'stage': 'document_creation',
+                    'progress': 10
+                }
+            )
+
+            # Extract and enhance metadata
+            extracted_metadata = _extract_document_metadata(document_data)
+
+            # Create document record
+            document = Document(
+                id=str(uuid.uuid4()),
+                title=document_data.get("title", "Untitled Document"),
+                content=document_data.get("content", ""),
+                content_type=document_data.get("content_type", "text/plain"),
+                file_path=document_data.get("file_path"),
+                file_size=document_data.get("file_size", len(document_data.get("content", ""))),
+                doc_metadata=extracted_metadata,
+                tags=document_data.get("tags", []),
+                embedding_model="all-MiniLM-L6-v2",
+                is_active=True
+            )
+
+            db.add(document)
+            await db.flush()  # Get the document ID
+
+            logger.info(f"Created document record: {document.id}")
+
+            # Stage 2: Intelligent chunking
+            task_instance.update_state(
+                state='PROGRESS',
+                meta={
+                    'status': 'Performing intelligent chunking',
+                    'stage': 'chunking',
+                    'progress': 30
+                }
+            )
+
+            # Configure chunking strategy based on document type and content
+            chunk_config = _create_chunking_config(document_data, chunking_config)
+            chunker = DocumentChunker(chunk_config)
+
+            # Perform intelligent chunking
+            chunk_results = chunker.chunk_document(document)
+
+            # Validate chunk quality
+            validation_result = chunker.validate_chunks(chunk_results)
+            if not validation_result["valid"]:
+                logger.warning(f"Chunk validation issues: {validation_result['issues']}")
+
+            logger.info(f"Created {len(chunk_results)} chunks with quality score: {validation_result.get('quality_score', 0):.3f}")
+
+            # Stage 3: Generate embeddings
+            task_instance.update_state(
+                state='PROGRESS',
+                meta={
+                    'status': 'Generating vector embeddings',
+                    'stage': 'embedding_generation',
+                    'progress': 50
+                }
+            )
+
+            # Initialize embedding model
+            embedder = SentenceTransformer('all-MiniLM-L6-v2')
+
+            # Generate embeddings for all chunks
+            chunk_texts = [chunk.content for chunk in chunk_results]
+            embeddings = embedder.encode(chunk_texts, convert_to_tensor=False)
+
+            logger.info(f"Generated embeddings for {len(chunk_texts)} chunks")
+
+            # Stage 4: Index in Weaviate
+            task_instance.update_state(
+                state='PROGRESS',
+                meta={
+                    'status': 'Indexing in Weaviate',
+                    'stage': 'weaviate_indexing',
+                    'progress': 70
+                }
+            )
+
+            indexed_chunks = await _index_chunks_in_weaviate(
+                document, chunk_results, embeddings
+            )
+
+            # Stage 5: Create database records
+            task_instance.update_state(
+                state='PROGRESS',
+                meta={
+                    'status': 'Creating database records',
+                    'stage': 'database_storage',
+                    'progress': 90
+                }
+            )
+
+            # Create DocumentChunk records
+            chunk_records = []
+            for i, (chunk_result, embedding) in enumerate(zip(chunk_results, embeddings)):
+                chunk_record = DocumentChunk(
+                    id=chunk_result.metadata.chunk_id,
+                    document_id=document.id,
+                    content=chunk_result.content,
+                    chunk_index=chunk_result.metadata.chunk_index,
+                    chunk_size=chunk_result.metadata.chunk_size,
+                    start_position=chunk_result.metadata.start_position,
+                    end_position=chunk_result.metadata.end_position,
+                    chunk_metadata=chunk_result.metadata.to_dict(),
+                    vector_id=indexed_chunks[i].get("weaviate_id") if i < len(indexed_chunks) else None,
+                    embedding_model="all-MiniLM-L6-v2"
+                )
+                chunk_records.append(chunk_record)
+                db.add(chunk_record)
+
+            # Commit all changes
+            await db.commit()
+            await db.refresh(document)
+
+            processing_time = time.time() - start_time
+
+            # Prepare result
+            result = {
+                "success": True,
+                "document_id": document.id,
+                "title": document.title,
+                "content_type": document.content_type,
+                "file_size": document.file_size,
+                "chunks_created": len(chunk_records),
+                "chunks_indexed": len(indexed_chunks),
+                "processing_time": processing_time,
+                "metadata_extracted": extracted_metadata,
+                "chunking_stats": chunker.get_chunking_stats(chunk_results),
+                "validation_result": validation_result,
+                "embedding_model": "all-MiniLM-L6-v2",
+                "indexed_at": datetime.utcnow().isoformat()
+            }
+
+            logger.info(f"Document processing completed successfully: {document.id}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Document processing failed: {e}")
+            await db.rollback()
+            raise
+
+
+def _extract_document_metadata(document_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract and enhance document metadata automatically.
+
+    Args:
+        document_data: Raw document data
+
+    Returns:
+        Enhanced metadata dictionary
+    """
+    metadata = document_data.get("metadata", {}).copy()
+    content = document_data.get("content", "")
+
+    # Extract basic content statistics
+    metadata.update({
+        "content_length": len(content),
+        "word_count": len(content.split()),
+        "line_count": len(content.split('\n')),
+        "paragraph_count": len([p for p in content.split('\n\n') if p.strip()]),
+        "processed_at": datetime.utcnow().isoformat(),
+        "processing_version": "2.4.0"
+    })
+
+    # Extract title from content if not provided
+    if not document_data.get("title") or document_data.get("title") == "Untitled Document":
+        lines = content.split('\n')
+        for line in lines[:5]:  # Check first 5 lines
+            line = line.strip()
+            if line and len(line) < 100:  # Reasonable title length
+                metadata["extracted_title"] = line
+                break
+
+    # Detect content type characteristics
+    if content:
+        # Check for code patterns
+        code_indicators = ['def ', 'function ', 'class ', 'import ', '#include', '<?php']
+        if any(indicator in content for indicator in code_indicators):
+            metadata["content_characteristics"] = metadata.get("content_characteristics", []) + ["code"]
+
+        # Check for structured data
+        if '{' in content and '}' in content:
+            metadata["content_characteristics"] = metadata.get("content_characteristics", []) + ["structured"]
+
+        # Check for academic/formal content
+        academic_indicators = ['abstract', 'introduction', 'methodology', 'conclusion', 'references']
+        if any(indicator.lower() in content.lower() for indicator in academic_indicators):
+            metadata["content_characteristics"] = metadata.get("content_characteristics", []) + ["academic"]
+
+    # Add file-based metadata if available
+    file_path = document_data.get("file_path")
+    if file_path:
+        import os
+        metadata.update({
+            "file_extension": os.path.splitext(file_path)[1].lower(),
+            "file_name": os.path.basename(file_path)
+        })
+
+    return metadata
+
+
+def _create_chunking_config(
+    document_data: Dict[str, Any],
+    chunking_config: Optional[Dict[str, Any]]
+) -> ChunkingConfig:
+    """
+    Create intelligent chunking configuration based on document characteristics.
+
+    Args:
+        document_data: Document data for analysis
+        chunking_config: Optional override configuration
+
+    Returns:
+        Optimized ChunkingConfig instance
+    """
+    # Start with default configuration
+    config_params = {
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "strategy": ChunkingStrategy.RECURSIVE_CHARACTER,
+        "preserve_sentences": True,
+        "preserve_paragraphs": True
+    }
+
+    # Apply user overrides
+    if chunking_config:
+        config_params.update(chunking_config)
+
+    # Intelligent strategy selection based on content
+    content = document_data.get("content", "")
+    content_type = document_data.get("content_type", "text/plain")
+    metadata = document_data.get("metadata", {})
+
+    # Adjust based on content type
+    if content_type in ["application/json", "text/json"]:
+        config_params.update({
+            "strategy": ChunkingStrategy.SEMANTIC_BOUNDARY,
+            "chunk_size": 800,
+            "separators": ["\n\n", "\n", ",", " "]
+        })
+    elif content_type in ["text/markdown", "text/x-markdown"]:
+        config_params.update({
+            "strategy": ChunkingStrategy.HYBRID,
+            "separators": ["\n## ", "\n# ", "\n\n", "\n", ". ", " "]
+        })
+    elif "code" in metadata.get("content_characteristics", []):
+        config_params.update({
+            "strategy": ChunkingStrategy.SEMANTIC_BOUNDARY,
+            "chunk_size": 1200,
+            "separators": ["\n\ndef ", "\nclass ", "\n\n", "\n", " "]
+        })
+
+    # Adjust based on content length
+    content_length = len(content)
+    if content_length < 2000:
+        # Small documents - use larger chunks to maintain context
+        config_params.update({
+            "chunk_size": min(1500, content_length // 2),
+            "chunk_overlap": 100
+        })
+    elif content_length > 50000:
+        # Large documents - use smaller chunks for better granularity
+        config_params.update({
+            "chunk_size": 800,
+            "chunk_overlap": 150
+        })
+
+    # Adjust based on content characteristics
+    if "academic" in metadata.get("content_characteristics", []):
+        config_params.update({
+            "strategy": ChunkingStrategy.HYBRID,
+            "chunk_size": 1200,
+            "preserve_paragraphs": True
+        })
+
+    return ChunkingConfig(**config_params)
+
+
+async def _index_chunks_in_weaviate(
+    document: Document,
+    chunk_results: List,
+    embeddings: List
+) -> List[Dict[str, Any]]:
+    """
+    Index document chunks in Weaviate with proper schema and metadata.
+
+    Args:
+        document: Document instance
+        chunk_results: List of DocumentChunkResult objects
+        embeddings: List of embedding vectors
+
+    Returns:
+        List of indexing results with Weaviate IDs
+    """
+    import requests
+
+    indexed_chunks = []
+
+    # Prepare Weaviate headers
+    headers = {'Content-Type': 'application/json'}
+    if settings.weaviate_api_key:
+        headers['Authorization'] = f'Bearer {settings.weaviate_api_key}'
+
+    try:
+        for i, (chunk_result, embedding) in enumerate(zip(chunk_results, embeddings)):
+            # Prepare chunk data for Weaviate
+            chunk_data = {
+                "class": "DocumentChunk",
+                "properties": {
+                    "content": chunk_result.content,
+                    "document_id": document.id,
+                    "document_title": document.title,
+                    "chunk_index": chunk_result.metadata.chunk_index,
+                    "chunk_size": chunk_result.metadata.chunk_size,
+                    "start_position": chunk_result.metadata.start_position,
+                    "end_position": chunk_result.metadata.end_position,
+                    "content_type": document.content_type,
+                    "word_count": chunk_result.metadata.word_count,
+                    "sentence_count": chunk_result.metadata.sentence_count,
+                    "content_density": chunk_result.metadata.content_density,
+                    "semantic_coherence_score": chunk_result.metadata.semantic_coherence_score,
+                    "metadata": json.dumps(chunk_result.metadata.to_dict()),
+                    "created_at": datetime.utcnow().isoformat(),
+                    "embedding_model": "all-MiniLM-L6-v2"
+                },
+                "vector": embedding.tolist() if hasattr(embedding, 'tolist') else list(embedding)
+            }
+
+            # Index in Weaviate
+            response = requests.post(
+                f"{settings.weaviate_url}/v1/objects",
+                headers=headers,
+                json=chunk_data,
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                weaviate_result = response.json()
+                indexed_chunks.append({
+                    "chunk_index": i,
+                    "weaviate_id": weaviate_result.get("id"),
+                    "success": True
+                })
+                logger.debug(f"Indexed chunk {i} in Weaviate: {weaviate_result.get('id')}")
+            else:
+                logger.error(f"Failed to index chunk {i} in Weaviate: {response.status_code} - {response.text}")
+                indexed_chunks.append({
+                    "chunk_index": i,
+                    "weaviate_id": None,
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}"
+                })
+
+        logger.info(f"Successfully indexed {len([c for c in indexed_chunks if c['success']])} out of {len(chunk_results)} chunks in Weaviate")
+        return indexed_chunks
+
+    except Exception as e:
+        logger.error(f"Failed to index chunks in Weaviate: {e}")
+        # Return failed results for all chunks
+        return [
+            {
+                "chunk_index": i,
+                "weaviate_id": None,
+                "success": False,
+                "error": str(e)
+            }
+            for i in range(len(chunk_results))
+        ]
+
 
 @celery_app.task(bind=True, name="document_tasks.rebuild_vector_index")
 def rebuild_vector_index_task(self, collection_name: Optional[str] = None) -> Dict[str, Any]:
@@ -256,14 +778,25 @@ async def _execute_complex_rag_query(query: str, search_limit: int,
                     ]
             
             # Execute RAG query
-            rag_result = await rag_system.retrieve_and_generate(
-                db=db,
+            from app.core.rag_system import production_rag_system
+
+            rag_response = await production_rag_system.generate_response(
                 query=query,
-                search_limit=search_limit,
-                score_threshold=0.1,
-                use_multi_agent=use_multi_agent,
-                conversation_context=context
+                context_limit=search_limit,
+                certainty_threshold=0.7,
+                conversation_id=conversation_id
             )
+
+            # Convert to expected format for backward compatibility
+            rag_result = {
+                "query": query,
+                "response": rag_response.answer,
+                "sources": rag_response.sources,
+                "confidence": rag_response.confidence,
+                "context_used": rag_response.context_used,
+                "query_time": rag_response.query_time_ms,
+                "timestamp": rag_response.timestamp
+            }
             
             execution_time = time.time() - start_time
             

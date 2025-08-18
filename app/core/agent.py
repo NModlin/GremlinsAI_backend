@@ -26,7 +26,8 @@ from typing import TypedDict, Annotated
 import operator
 
 from app.core.tools import duckduckgo_search, sanitize_input
-from app.core.llm_manager import ProductionLLMManager, ConversationContext
+from app.core.production_llm_manager import get_llm_manager
+from app.core.llm_manager import ConversationContext
 from app.core.context_store import get_context_store
 from app.monitoring.metrics import metrics
 from app.core.memory_manager import MemoryManager
@@ -35,6 +36,11 @@ from app.core.task_planner import get_task_planner, ExecutionPlan, PlanStep, Pla
 from app.core.agent_learning import get_learning_service, AgentLearning
 
 logger = logging.getLogger(__name__)
+
+
+class ToolNotFoundException(Exception):
+    """Exception raised when a requested tool is not found in the registry."""
+    pass
 
 @dataclass
 class ReasoningStep:
@@ -101,7 +107,7 @@ class ProductionAgent:
             planning_threshold: Complexity threshold for using planning vs ReAct
             weaviate_client: Optional Weaviate client for learning storage
         """
-        self.llm_manager = ProductionLLMManager()
+        self.llm_manager = get_llm_manager()
         self.max_iterations = max_iterations
         self.max_execution_time = max_execution_time
         self.planning_threshold = planning_threshold
@@ -636,6 +642,32 @@ While I wasn't able to complete all planned steps, I've provided the best result
             logger.error(error_msg)
             return f"Error: {error_msg}"
 
+    async def _execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
+        """Execute a tool with proper error handling and result formatting."""
+        tool_registry = get_tool_registry()
+        if tool_name not in tool_registry.tools:
+            raise ToolNotFoundException(f"Tool {tool_name} not found")
+
+        tool = tool_registry.get_tool(tool_name)
+        try:
+            result = await tool_registry.execute_tool(tool_name, tool_input)
+            return self._format_tool_result(result)
+        except Exception as e:
+            logger.error(f"Tool execution failed: {e}")
+            return f"Tool execution failed: {str(e)}"
+
+    def _format_tool_result(self, result) -> str:
+        """Format tool result for agent consumption."""
+        if hasattr(result, 'success') and hasattr(result, 'result'):
+            # ToolResult object
+            if result.success:
+                return str(result.result)
+            else:
+                return f"Error: {result.error_message}"
+        else:
+            # Direct result
+            return str(result)
+
     async def self_reflection(self, agent_result: AgentResult, original_query: str,
                             execution_time: float) -> Optional[AgentLearning]:
         """
@@ -754,7 +786,7 @@ While I wasn't able to complete all planned steps, I've provided the best result
 
     async def reason_and_act(self, user_query: str, conversation_id: Optional[str] = None) -> AgentResult:
         """
-        Execute the enhanced reasoning loop with planning for complex queries.
+        Implement full ReAct cycle: Thought → Action → Observation → Repeat
 
         Args:
             user_query: The user's question or request
@@ -764,226 +796,161 @@ While I wasn't able to complete all planned steps, I've provided the best result
             AgentResult with the final answer and reasoning steps
         """
         reasoning_steps = []
+        max_iterations = 10
         start_time = datetime.utcnow()
 
-        # Load conversation context and memory
-        context = None
-        if conversation_id:
-            context = self._load_conversation_context(conversation_id)
-            # Add user query to context
-            context.messages.append({
-                'role': 'user',
-                'content': user_query,
-                'timestamp': datetime.utcnow().isoformat()
-            })
+        for i in range(max_iterations):
+            # Check execution time limit
+            elapsed_time = (datetime.utcnow() - start_time).total_seconds()
+            if elapsed_time > self.max_execution_time:
+                error_msg = f"Agent execution timeout after {elapsed_time:.1f} seconds"
+                logger.warning(error_msg)
+                return AgentResult(
+                    final_answer=f"I apologize, but I couldn't complete the task within the time limit. {error_msg}",
+                    reasoning_steps=reasoning_steps,
+                    total_steps=i,
+                    success=False,
+                    error_message=error_msg
+                )
+
+            # Reasoning step
+            thought = await self._generate_thought(user_query, reasoning_steps)
+
+            # Action selection
+            action = await self._select_action(thought)
+
+            # Action execution
+            observation = await self._execute_action(action['name'], action['input'])
+
+            # Create reasoning step
+            current_step = ReasoningStep(
+                step_number=i + 1,
+                thought=thought,
+                action=action['name'],
+                action_input=action['input'],
+                observation=observation
+            )
+            reasoning_steps.append(current_step)
+
+            logger.info(f"Step {i+1}: Thought='{thought[:100]}...', Action='{action['name']}', Observation='{observation[:100]}...'")
+
+            # Check if complete
+            if self._is_complete(observation):
+                final_answer = self._generate_final_answer(reasoning_steps)
+
+                return AgentResult(
+                    final_answer=final_answer,
+                    reasoning_steps=reasoning_steps,
+                    total_steps=len(reasoning_steps),
+                    success=True
+                )
+
+        # If we reach max iterations without completion
+        final_answer = self._generate_final_answer(reasoning_steps)
+        return AgentResult(
+            final_answer=final_answer,
+            reasoning_steps=reasoning_steps,
+            total_steps=len(reasoning_steps),
+            success=False,
+            error_message="Maximum iterations reached without completion"
+        )
+
+    async def _generate_thought(self, query: str, reasoning_steps: List[ReasoningStep]) -> str:
+        """Generate a thought based on the query and previous reasoning steps."""
+        context = ""
+        if reasoning_steps:
+            context = "\n".join([
+                f"Step {step.step_number}: {step.thought} -> {step.action}({step.action_input}) -> {step.observation}"
+                for step in reasoning_steps[-3:]  # Last 3 steps for context
+            ])
+
+        prompt = f"""You are a helpful AI assistant. Think step by step about how to answer this query.
+
+Query: {query}
+
+Previous steps:
+{context}
+
+What should you think about next? Provide a clear thought about what you need to do.
+Thought:"""
+
+        response = await self.llm_manager.generate_response(prompt)
+        return response.content.strip()
+
+    async def _select_action(self, thought: str) -> Dict[str, str]:
+        """Select an action based on the current thought."""
+        tool_registry = get_tool_registry()
+        available_tools = tool_registry.list_tools() or []
+
+        prompt = f"""Based on this thought, what action should you take?
+
+Thought: {thought}
+
+Available tools: {', '.join(available_tools) if available_tools else 'web_search, calculator'}
+
+Choose the most appropriate tool and provide the input. Respond in this format:
+Action: tool_name
+Action Input: input_for_tool
+
+If you have enough information to provide a final answer, use:
+Action: final_answer
+Action Input: your_final_answer"""
+
+        response = await self.llm_manager.generate_response(prompt)
+
+        # Parse action and input
+        lines = response.content.strip().split('\n')
+        action_name = "web_search"  # default fallback
+        action_input = thought  # default fallback
+
+        for line in lines:
+            if line.startswith("Action:"):
+                action_name = line.replace("Action:", "").strip()
+            elif line.startswith("Action Input:"):
+                action_input = line.replace("Action Input:", "").strip()
+
+        return {"name": action_name, "input": action_input}
+
+    async def _execute_action(self, action_name: str, action_input: str) -> str:
+        """Execute an action and return the observation."""
+        if action_name == "final_answer":
+            return f"Final Answer: {action_input}"
 
         try:
-            # Apply learning context from past experiences
-            learning_context = await self._apply_learning_context(user_query)
-
-            # Assess query complexity to determine approach
-            complexity_score = await self._assess_query_complexity(user_query)
-            logger.info(f"Query complexity assessed: {complexity_score:.2f}")
-
-            # Use planning approach for complex queries
-            if complexity_score >= self.planning_threshold:
-                logger.info("Using planning approach for complex query")
-
-                # Generate execution plan
-                execution_plan = await self.task_planner.analyze_and_plan(user_query)
-
-                # Execute the plan
-                result = await self._execute_plan(execution_plan, conversation_id)
-
-                # Process memory and save context
-                if context:
-                    # Add assistant response to context
-                    context.messages.append({
-                        'role': 'assistant',
-                        'content': result.final_answer,
-                        'timestamp': datetime.utcnow().isoformat()
-                    })
-
-                    # Process memory from this conversation turn
-                    context = self.memory_manager.process_conversation_turn(context, result.total_steps)
-
-                    # Save updated context with memory
-                    self._save_conversation_context(context)
-
-                # Perform self-reflection for learning and adaptation
-                learning = await self.self_reflection(result, user_query,
-                                                    (datetime.utcnow() - start_time).total_seconds())
-                if learning:
-                    logger.info(f"Self-reflection completed: {learning.performance_category.value}")
-
+            # Use the _execute_tool method we implemented
+            result = await self._execute_tool(action_name, {"query": action_input})
+            return result
+        except ToolNotFoundException:
+            # Fallback to web search if tool not found
+            try:
+                result = await self._execute_tool("web_search", {"query": action_input})
                 return result
-
-            # Use traditional ReAct approach for simple queries
-            logger.info("Using traditional ReAct approach for simple query")
-            # Initialize conversation context
-            conversation_history = ""
-
-            for step_num in range(1, self.max_iterations + 1):
-                # Check execution time limit
-                elapsed_time = (datetime.utcnow() - start_time).total_seconds()
-                if elapsed_time > self.max_execution_time:
-                    error_msg = f"Agent execution timeout after {elapsed_time:.1f} seconds"
-                    logger.warning(error_msg)
-                    return AgentResult(
-                        final_answer=f"I apologize, but I couldn't complete the task within the time limit. {error_msg}",
-                        reasoning_steps=reasoning_steps,
-                        total_steps=step_num - 1,
-                        success=False,
-                        error_message=error_msg
-                    )
-
-                # Create memory-aware prompt with conversation history
-                if context:
-                    prompt = await self._create_memory_aware_prompt(user_query, context)
-                else:
-                    # Apply learning context even without conversation context
-                    learning_context = await self._apply_learning_context(user_query)
-                    context_section = f"\n\n{learning_context}" if learning_context else ""
-                    prompt = self.react_prompt.format(user_query=user_query, memory_context=context_section)
-
-                if conversation_history:
-                    prompt += f"\n\nPrevious steps:\n{conversation_history}"
-
-                # Generate reasoning step
-                logger.info(f"Step {step_num}: Generating reasoning")
-                llm_response = await self.llm_manager.generate_response(
-                    prompt,
-                    conversation_id=conversation_id
-                )
-
-                # Parse the response
-                thought, action, action_input = self._parse_llm_response(llm_response.content)
-
-                # Create reasoning step
-                current_step = ReasoningStep(
-                    step_number=step_num,
-                    thought=thought,
-                    action=action,
-                    action_input=action_input
-                )
-
-                logger.info(f"Step {step_num}: Thought='{thought[:100]}...', Action='{action}', Input='{action_input[:50] if action_input else None}...'")
-
-                # Execute action if provided
-                if action and action_input:
-                    observation = await self._execute_action(action, action_input)
-                    current_step.observation = observation
-
-                    logger.info(f"Step {step_num}: Observation='{observation[:100]}...'")
-
-                    # Update conversation history
-                    conversation_history += f"\nStep {step_num}:\nThought: {thought}\nAction: {action}\nAction Input: {action_input}\nObservation: {observation}\n"
-
-                    # Check if we should continue
-                    if not self._should_continue(action, observation):
-                        reasoning_steps.append(current_step)
-
-                        # Extract final answer from observation
-                        final_answer = observation.replace("Final Answer: ", "") if observation.startswith("Final Answer: ") else observation
-
-                        # Process memory and save context before returning
-                        if context:
-                            # Add assistant response to context
-                            context.messages.append({
-                                'role': 'assistant',
-                                'content': final_answer,
-                                'timestamp': datetime.utcnow().isoformat()
-                            })
-
-                            # Process memory from this conversation turn
-                            context = self.memory_manager.process_conversation_turn(context, step_num)
-
-                            # Save updated context with memory
-                            self._save_conversation_context(context)
-
-                        # Record successful agent query metrics
-                        metrics.record_agent_query(
-                            agent_type="production_agent",
-                            reasoning_steps=step_num,
-                            success=True
-                        )
-
-                        result = AgentResult(
-                            final_answer=final_answer,
-                            reasoning_steps=reasoning_steps,
-                            total_steps=step_num,
-                            success=True,
-                            plan_used=False
-                        )
-
-                        # Perform self-reflection for learning and adaptation
-                        learning = await self.self_reflection(result, user_query,
-                                                            (datetime.utcnow() - start_time).total_seconds())
-                        if learning:
-                            logger.info(f"Self-reflection completed: {learning.performance_category.value}")
-
-                        return result
-                else:
-                    # No action provided, treat as error
-                    current_step.observation = "Error: No valid action provided"
-                    logger.warning(f"Step {step_num}: No valid action provided in LLM response")
-
-                reasoning_steps.append(current_step)
-
-            # Max iterations reached
-            error_msg = f"Agent reached maximum iterations ({self.max_iterations}) without completing the task"
-            logger.warning(error_msg)
-
-            # Process memory even for incomplete tasks
-            if context:
-                # Add a partial response to context
-                context.messages.append({
-                    'role': 'assistant',
-                    'content': "I apologize, but I couldn't complete the task within the maximum number of reasoning steps.",
-                    'timestamp': datetime.utcnow().isoformat()
-                })
-
-                # Process memory from this conversation turn
-                context = self.memory_manager.process_conversation_turn(context, self.max_iterations)
-
-                # Save updated context with memory
-                self._save_conversation_context(context)
-
-            # Record failed agent query metrics
-            metrics.record_agent_query(
-                agent_type="production_agent",
-                reasoning_steps=len(reasoning_steps),
-                success=False
-            )
-
-            return AgentResult(
-                final_answer="I apologize, but I couldn't complete the task within the maximum number of reasoning steps.",
-                reasoning_steps=reasoning_steps,
-                total_steps=self.max_iterations,
-                success=False,
-                error_message=error_msg,
-                plan_used=False
-            )
-
+            except Exception as e:
+                return f"Error: Could not execute action {action_name}: {str(e)}"
         except Exception as e:
-            error_msg = f"Agent execution error: {str(e)}"
-            logger.error(error_msg, exc_info=True)
+            return f"Error executing {action_name}: {str(e)}"
 
-            # Record failed agent query metrics
-            metrics.record_agent_query(
-                agent_type="production_agent",
-                reasoning_steps=len(reasoning_steps),
-                success=False
-            )
+    def _is_complete(self, observation: str) -> bool:
+        """Check if the reasoning is complete based on the observation."""
+        return observation.startswith("Final Answer:")
 
-            return AgentResult(
-                final_answer=f"I apologize, but an error occurred while processing your request: {str(e)}",
-                reasoning_steps=reasoning_steps,
-                total_steps=len(reasoning_steps),
-                success=False,
-                error_message=error_msg,
-                plan_used=False
-            )
+    def _generate_final_answer(self, reasoning_steps: List[ReasoningStep]) -> str:
+        """Generate a final answer based on all reasoning steps."""
+        if not reasoning_steps:
+            return "I apologize, but I couldn't process your request."
+
+        # Look for final answer in the last observation
+        last_step = reasoning_steps[-1]
+        if last_step.observation and last_step.observation.startswith("Final Answer:"):
+            return last_step.observation.replace("Final Answer:", "").strip()
+
+        # If no final answer found, summarize the reasoning
+        summary = "Based on my analysis:\n"
+        for step in reasoning_steps:
+            if step.observation and not step.observation.startswith("Error"):
+                summary += f"- {step.observation[:100]}...\n"
+
+        return summary
 
 # Global agent instance
 _production_agent = None

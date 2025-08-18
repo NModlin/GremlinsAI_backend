@@ -637,3 +637,82 @@ def get_crew_manager() -> CrewManager:
     if '_crew_manager' not in globals():
         _crew_manager = CrewManager()
     return _crew_manager
+
+
+def setup_research_crew() -> CrewManager:
+    """
+    Setup and return a research crew for complex task execution.
+
+    This function creates a specialized crew with:
+    - Research agent that uses tools to search Weaviate
+    - Analysis agent that processes researcher's output for insights
+    - Writer agent that synthesizes findings into coherent reports
+    - Coordinator agent that manages the overall workflow
+
+    Returns:
+        CrewManager instance configured for research workflows
+    """
+    if not CREWAI_AVAILABLE:
+        raise ImportError("CrewAI is not available. Install with: pip install crewai crewai-tools")
+
+    logger.info("Setting up research crew with specialized agents")
+
+    # Create and return crew manager
+    crew_manager = CrewManager()
+
+    # Validate that all required agents are available
+    required_agents = ["researcher", "analyst", "writer", "coordinator"]
+    available_agents = list(crew_manager.agents.keys())
+
+    for required_agent in required_agents:
+        if required_agent not in available_agents:
+            logger.warning(f"Required agent '{required_agent}' not found in crew")
+
+    logger.info(f"Research crew setup complete with agents: {available_agents}")
+    return crew_manager
+
+
+def execute_complex_task(task_description: str, workflow_type: str = "research_analyze_write") -> CrewResult:
+    """
+    Execute a complex task using the research crew.
+
+    This function demonstrates the complete workflow:
+    1. Setup the research crew
+    2. Assign the complex task to the crew
+    3. Execute with crew.kickoff()
+    4. Handle and return the final output
+
+    Args:
+        task_description: Description of the complex task to execute
+        workflow_type: Type of workflow to use
+
+    Returns:
+        CrewResult with the execution results
+    """
+    try:
+        # Setup the research crew
+        crew = setup_research_crew()
+
+        # Execute the task based on workflow type
+        if workflow_type == "research_analyze_write":
+            result = crew.execute_research_analyze_write(task_description)
+        elif workflow_type == "complex_analysis":
+            result = crew.execute_collaborative_analysis(task_description)
+        else:
+            result = crew.execute_collaborative_query(task_description)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Complex task execution failed: {e}")
+        return CrewResult(
+            success=False,
+            result=f"Task execution failed: {str(e)}",
+            agent_outputs={},
+            execution_time=0.0,
+            error_message=str(e)
+        )
+
+
+# Global crew manager instance
+crew_manager = CrewManager() if CREWAI_AVAILABLE else None
