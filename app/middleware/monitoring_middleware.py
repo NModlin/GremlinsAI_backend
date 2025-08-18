@@ -20,7 +20,7 @@ from typing import Dict, Optional, Callable
 from urllib.parse import urlparse
 
 from fastapi import Request, Response
-from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import StreamingResponse
 
 from app.core.metrics_service import metrics_service

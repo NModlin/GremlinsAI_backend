@@ -334,7 +334,19 @@ class Settings(BaseSettings):
     # ===== MONITORING AND OBSERVABILITY =====
     enable_metrics: bool = Field(default=True, description="Enable Prometheus metrics")
     metrics_port: int = Field(default=8001, description="Metrics server port")
-    enable_tracing: bool = Field(default=False, description="Enable distributed tracing")
+
+    # Hard feature flag to control all OpenTelemetry observability (instrumentation & exporters)
+    # Default disabled per project policy: "Only enable OpenTelemetry/Jaeger if explicitly confirmed"
+    observability_enabled: bool = Field(
+        default=False,
+        description=(
+            "Master switch for OpenTelemetry-based observability. When False, tracing/instrumentation "
+            "is disabled and MinimalTracingService is used regardless of opentelemetry installation."
+        ),
+    )
+
+    # Backwards-compatible flag (no longer authoritative when observability_enabled is False)
+    enable_tracing: bool = Field(default=False, description="Enable distributed tracing (deprecated; see observability_enabled)")
     jaeger_endpoint: Optional[str] = Field(default=None, description="Jaeger tracing endpoint")
 
     # Health Check Configuration

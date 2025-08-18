@@ -26,7 +26,7 @@ import jwt
 from passlib.context import CryptContext
 from fastapi import HTTPException, status, Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 import redis.asyncio as redis
 
 from app.core.config import get_settings
@@ -100,8 +100,9 @@ class LoginRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, description="Username")
     password: str = Field(..., min_length=8, max_length=128, description="Password")
     
-    @validator('username')
-    def validate_username(cls, v):
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v: str) -> str:
         """Validate username format."""
         if not v.replace('_', '').replace('-', '').replace('.', '').isalnum():
             raise ValueError('Username can only contain letters, numbers, hyphens, underscores, and dots')

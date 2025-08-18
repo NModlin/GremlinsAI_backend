@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.security_service import (
     security_service, 
@@ -32,7 +32,7 @@ from app.core.security_service import (
     UserRole
 )
 from app.core.logging_config import log_security_event, log_suspicious_activity
-from app.database.session import get_db
+from app.database.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -53,8 +53,9 @@ class RefreshTokenRequest(BaseModel):
     """Refresh token request."""
     refresh_token: str = Field(..., description="Refresh token")
     
-    @validator('refresh_token')
-    def validate_refresh_token(cls, v):
+    @field_validator('refresh_token')
+    @classmethod
+    def validate_refresh_token(cls, v: str) -> str:
         """Validate refresh token format."""
         if not v or len(v) < 10:
             raise ValueError('Invalid refresh token format')
@@ -66,21 +67,22 @@ class ChangePasswordRequest(BaseModel):
     current_password: str = Field(..., min_length=8, max_length=128, description="Current password")
     new_password: str = Field(..., min_length=8, max_length=128, description="New password")
     
-    @validator('new_password')
-    def validate_new_password(cls, v):
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
         """Validate new password strength."""
         if len(v) < 8:
             raise ValueError('Password must be at least 8 characters long')
-        
+
         # Check for basic password requirements
         has_upper = any(c.isupper() for c in v)
         has_lower = any(c.islower() for c in v)
         has_digit = any(c.isdigit() for c in v)
         has_special = any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in v)
-        
+
         if not (has_upper and has_lower and has_digit and has_special):
             raise ValueError('Password must contain uppercase, lowercase, digit, and special character')
-        
+
         return v
 
 

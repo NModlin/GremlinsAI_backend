@@ -98,43 +98,43 @@ async def execute_multi_agent_task(
                 task_span.set_attribute("multi_agent.result_length", len(result.result))
 
             # Save to conversation history if requested
-        conversation_id = request.get("conversation_id")
-        if request.get("save_conversation", False) and conversation_id:
-            try:
-                await ChatHistoryService.add_message(
-                    db=db,
-                    conversation_id=conversation_id,
-                    role="user",
-                    content=task_description
-                )
-                await ChatHistoryService.add_message(
-                    db=db,
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=result.result,
-                    extra_data={
-                        "workflow_type": workflow_type,
-                        "agents_involved": result.agents_involved,
-                        "execution_time": result.execution_time,
-                        "performance_metrics": result.performance_metrics
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"Failed to save conversation: {e}")
+            conversation_id = request.get("conversation_id")
+            if request.get("save_conversation", False) and conversation_id:
+                try:
+                    await ChatHistoryService.add_message(
+                        db=db,
+                        conversation_id=conversation_id,
+                        role="user",
+                        content=task_description
+                    )
+                    await ChatHistoryService.add_message(
+                        db=db,
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=result.result,
+                        extra_data={
+                            "workflow_type": workflow_type,
+                            "agents_involved": result.agents_involved,
+                            "execution_time": result.execution_time,
+                            "performance_metrics": result.performance_metrics
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save conversation: {e}")
 
-        # Return comprehensive response
-        return {
-            "success": result.success,
-            "result": result.result,
-            "agents_involved": result.agents_involved,
-            "execution_time": result.execution_time,
-            "workflow_type": result.workflow_type,
-            "context_preserved": result.context_preserved,
-            "performance_metrics": result.performance_metrics,
-            "error_message": result.error_message,
-            "conversation_id": conversation_id,
-            "timestamp": time.time()
-        }
+            # Return comprehensive response
+            return {
+                "success": result.success,
+                "result": result.result,
+                "agents_involved": result.agents_involved,
+                "execution_time": result.execution_time,
+                "workflow_type": result.workflow_type,
+                "context_preserved": result.context_preserved,
+                "performance_metrics": result.performance_metrics,
+                "error_message": result.error_message,
+                "conversation_id": conversation_id,
+                "timestamp": time.time()
+            }
 
         except HTTPException:
             raise

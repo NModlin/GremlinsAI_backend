@@ -1,5 +1,5 @@
 # app/api/v1/schemas/multi_agent.py
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 from enum import Enum
 
@@ -41,7 +41,7 @@ class MultiAgentRequest(BaseModel):
     preferred_agents: Optional[List[AgentType]] = Field(
         None,
         description="Specific agents to use (if not specified, system will choose)",
-        max_items=10
+        max_length=10
     )
     context_depth: int = Field(
         default=10,

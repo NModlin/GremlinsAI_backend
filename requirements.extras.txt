@@ -1,0 +1,5 @@
+# Optional extras for multi-agent features
+# Install with: pip install -r requirements.extras.txt
+
+crewai>=0.28.0,<1.0.0
+crewai-tools>=0.1.0,<1.0.0

@@ -240,6 +240,12 @@ app.include_router(health.router, prefix="/api/v1/health", tags=["Health & Monit
 app.include_router(oauth.router, prefix="/api/v1/oauth", tags=["OAuth Authentication"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["Monitoring"])
 
+
+# Simple root health endpoint for Phase 0 acceptance
+@app.get("/health", tags=["Health"])
+async def health_root():
+    return {"status": "ok"}
+
 @app.get("/", tags=["Root"])
 async def read_root():
     """

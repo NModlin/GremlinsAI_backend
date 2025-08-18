@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 from fastapi import Request, Response, HTTPException, status
-from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
@@ -310,7 +310,13 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         """Initialize CSRF protection middleware."""
         super().__init__(app)
-        self.csrf_exempt_paths = {"/auth/login", "/health", "/metrics"}
+        # Exempt health/metrics and both legacy and versioned auth login paths
+        self.csrf_exempt_paths = {
+            "/auth/login",
+            f"{settings.api_v1_prefix}/auth/login",
+            "/health",
+            "/metrics",
+        }
         self.state_changing_methods = {"POST", "PUT", "PATCH", "DELETE"}
     
     async def dispatch(self, request: Request, call_next):
@@ -370,5 +376,10 @@ def setup_security_middleware(app):
             await asyncio.sleep(3600)  # Run every hour
             await security_middleware.cleanup_old_data()
     
-    # Start cleanup task (would be better to use a proper task scheduler in production)
-    asyncio.create_task(cleanup_task())
+    # Start cleanup task only if running within an event loop
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(cleanup_task())
+    except RuntimeError:
+        # No running loop during import-time app creation; will be scheduled on first request
+        pass
