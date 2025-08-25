@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal, health
+from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal, health, websocket as websocket_realtime
 from app.api.v1.websocket import endpoints as websocket_endpoints
 from app.database.database import ensure_data_directory
 from app.core.exceptions import GremlinsAIException
@@ -28,6 +28,33 @@ async def lifespan(app: FastAPI):
     # Initialize service monitoring
     from app.core.service_monitor import initialize_service_monitoring
     initialize_service_monitoring()
+
+    # Check and log LLM status on startup
+    try:
+        from app.core.llm_config import get_llm_info, get_llm_health_status
+        import logging
+
+        logger = logging.getLogger(__name__)
+        llm_info = get_llm_info()
+        health_status = get_llm_health_status()
+
+        logger.info(f"🧙‍♂️ GremlinsAI starting with LLM provider: {llm_info['provider']}")
+        logger.info(f"Model: {llm_info['model_name']}")
+        logger.info(f"LLM Available: {llm_info['available']}")
+        logger.info(f"Health Status: {health_status['status']} (Score: {health_status['health_score']}/100)")
+
+        if not llm_info['available']:
+            logger.warning("⚠️  No real LLM configured - using mock responses")
+            logger.warning("💡 Configure LLM: python scripts/setup_local_llm.py")
+        elif health_status['status'] == 'unhealthy':
+            logger.warning("⚠️  LLM health issues detected")
+            for issue in health_status.get('issues', []):
+                logger.warning(f"   - {issue}")
+        else:
+            logger.info("✅ LLM system ready!")
+
+    except Exception as e:
+        logger.error(f"Failed to check LLM status on startup: {e}")
 
     yield
     # Shutdown
@@ -80,6 +107,7 @@ app.include_router(documents.router, prefix="/api/v1/documents", tags=["Document
 app.include_router(chat_history.router, prefix="/api/v1/history", tags=["Chat History"])
 app.include_router(orchestrator.router, prefix="/api/v1/orchestrator", tags=["Orchestrator"])
 app.include_router(websocket_endpoints.router, prefix="/api/v1/ws", tags=["WebSocket"])
+app.include_router(websocket_realtime.router, prefix="/api/v1/realtime-ws", tags=["Real-time WebSocket"])
 app.include_router(realtime.router, prefix="/api/v1/realtime", tags=["Real-time API"])
 app.include_router(docs.router, prefix="/docs", tags=["Documentation"])
 app.include_router(developer_portal.router, prefix="/developer-portal", tags=["Developer Portal"])

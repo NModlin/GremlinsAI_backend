@@ -114,6 +114,177 @@ class DocumentChunk(Base):
         return f"<DocumentChunk(id={self.id}, document_id={self.document_id}, index={self.chunk_index})>"
 
 
+class DocumentAnalytics(Base):
+    """
+    Model for tracking document analytics and usage metrics.
+    """
+    __tablename__ = "document_analytics"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    document_id = Column(String, ForeignKey("documents.id"), nullable=False)
+
+    # Usage metrics
+    view_count = Column(Integer, default=0)
+    search_count = Column(Integer, default=0)  # How many times found in searches
+    download_count = Column(Integer, default=0)
+    share_count = Column(Integer, default=0)
+
+    # Engagement metrics
+    avg_time_spent = Column(Float, default=0.0)  # Average time spent viewing (seconds)
+    bounce_rate = Column(Float, default=0.0)  # Percentage of quick exits
+
+    # Search performance
+    avg_search_rank = Column(Float, default=0.0)  # Average position in search results
+    click_through_rate = Column(Float, default=0.0)  # CTR from search results
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationship
+    document = relationship("Document", backref="analytics")
+
+    def __repr__(self):
+        return f"<DocumentAnalytics(document_id={self.document_id}, views={self.view_count})>"
+
+
+class SearchAnalytics(Base):
+    """
+    Model for tracking search analytics and query patterns.
+    """
+    __tablename__ = "search_analytics"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Search details
+    query = Column(String(1000), nullable=False)
+    query_hash = Column(String(64), nullable=False, index=True)  # Hash for deduplication
+    search_type = Column(String(50), default="semantic")  # semantic, bm25, hybrid, advanced
+
+    # Results
+    results_count = Column(Integer, default=0)
+    results_returned = Column(Integer, default=0)
+
+    # Performance
+    execution_time_ms = Column(Float, default=0.0)
+
+    # User interaction
+    clicked_results = Column(JSON, nullable=True)  # List of clicked document IDs
+    user_session = Column(String(100), nullable=True)  # Session identifier
+
+    # Filters applied (for advanced search)
+    filters_applied = Column(JSON, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __repr__(self):
+        return f"<SearchAnalytics(query={self.query[:50]}, results={self.results_count})>"
+
+
+class UserEngagement(Base):
+    """
+    Model for tracking user engagement patterns.
+    """
+    __tablename__ = "user_engagement"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # User identification (anonymous)
+    user_session = Column(String(100), nullable=False, index=True)
+    user_agent = Column(String(500), nullable=True)
+
+    # Engagement details
+    action_type = Column(String(50), nullable=False)  # view, search, download, upload, analyze
+    resource_type = Column(String(50), nullable=False)  # document, search, system
+    resource_id = Column(String, nullable=True)  # Document ID, search ID, etc.
+
+    # Context
+    duration_seconds = Column(Float, nullable=True)  # Time spent on action
+    context_data = Column(JSON, nullable=True)  # Additional context data
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __repr__(self):
+        return f"<UserEngagement(action={self.action_type}, resource={self.resource_type})>"
+
+
+class DocumentVersion(Base):
+    """
+    Model for document version control and change history.
+    """
+    __tablename__ = "document_versions"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    document_id = Column(String, ForeignKey("documents.id"), nullable=False)
+    version_number = Column(Integer, nullable=False)
+
+    # Version content
+    title = Column(String(500), nullable=False)
+    content = Column(Text, nullable=False)
+    content_type = Column(String(100), nullable=False)
+    file_size = Column(Integer, nullable=True)
+
+    # Version metadata
+    doc_metadata = Column(JSON, nullable=True)
+    tags = Column(JSON, nullable=True)
+
+    # Change information
+    change_summary = Column(String(1000), nullable=True)  # Brief description of changes
+    change_type = Column(String(50), default="update")  # create, update, restore, rollback
+    changed_fields = Column(JSON, nullable=True)  # List of fields that changed
+
+    # Version control
+    is_current = Column(Boolean, default=False)  # Is this the current version?
+    parent_version_id = Column(String, ForeignKey("document_versions.id"), nullable=True)
+
+    # User information (if available)
+    created_by = Column(String(100), nullable=True)  # User identifier
+    created_by_session = Column(String(100), nullable=True)  # Session identifier
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    document = relationship("Document", backref="versions")
+    parent_version = relationship("DocumentVersion", remote_side=[id], backref="child_versions")
+
+    def __repr__(self):
+        return f"<DocumentVersion(document_id={self.document_id}, version={self.version_number})>"
+
+
+class DocumentChangeLog(Base):
+    """
+    Model for detailed document change logging.
+    """
+    __tablename__ = "document_change_logs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    document_id = Column(String, ForeignKey("documents.id"), nullable=False)
+    version_id = Column(String, ForeignKey("document_versions.id"), nullable=False)
+
+    # Change details
+    field_name = Column(String(100), nullable=False)  # Field that changed
+    old_value = Column(Text, nullable=True)  # Previous value (truncated if too long)
+    new_value = Column(Text, nullable=True)  # New value (truncated if too long)
+    change_type = Column(String(20), nullable=False)  # added, modified, deleted
+
+    # Change metadata
+    value_type = Column(String(50), nullable=True)  # string, json, number, boolean
+    is_truncated = Column(Boolean, default=False)  # Was the value truncated?
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    document = relationship("Document")
+    version = relationship("DocumentVersion", backref="change_logs")
+
+    def __repr__(self):
+        return f"<DocumentChangeLog(document_id={self.document_id}, field={self.field_name})>"
+
+
 class SearchQuery(Base):
     """
     Model for tracking search queries and their results for analytics.

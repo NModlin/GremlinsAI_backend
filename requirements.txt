@@ -28,12 +28,15 @@ crewai>=0.28.0,<1.0.0
 crewai-tools>=0.1.0,<1.0.0
 langchain-openai>=0.1.0,<1.0.0
 
-# Phase 4: Data Infrastructure Overhaul
-qdrant-client>=1.7.0,<2.0.0
+# Phase 4: Data Infrastructure Overhaul - Weaviate Vector Database
+weaviate-client>=4.4.0,<5.0.0
 sentence-transformers>=2.2.0,<3.0.0
-langchain-qdrant>=0.1.0,<1.0.0
+langchain-weaviate>=0.0.1,<1.0.0
 pypdf>=4.0.0,<5.0.0
 python-multipart>=0.0.6,<1.0.0
+
+# CLIP embeddings for multimodal search
+clip-by-openai>=1.0.0,<2.0.0
 
 # Phase 5: Orchestration & Scalability
 celery>=5.3.0,<6.0.0
