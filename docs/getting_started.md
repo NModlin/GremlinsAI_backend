@@ -23,6 +23,11 @@ Traditional REST endpoints for all system functionality:
 - **Documentation**: Available at `http://localhost:8000/docs`
 - **Format**: JSON request/response
 
+> **🎯 Frontend Developers**: Check out our comprehensive frontend resources:
+> - **[Quick Reference](frontend_quick_reference.md)** - Essential endpoints and code snippets
+> - **[Troubleshooting Guide](frontend_troubleshooting_guide.md)** - Common issues and solutions
+> - **[Comprehensive Guide](frontend_integration_comprehensive.md)** - Complete integration examples
+
 ### GraphQL API
 Modern, flexible query language with real-time subscriptions:
 - **Endpoint**: `http://localhost:8000/graphql`
@@ -203,7 +208,7 @@ Currently, the API operates without authentication for development purposes. In 
 - HTTPS will be mandatory for all communications
 
 ```python
-# Future authentication pattern
+# Authentication pattern (when implemented)
 headers = {
     "Authorization": "Bearer YOUR_API_KEY",
     "Content-Type": "application/json"

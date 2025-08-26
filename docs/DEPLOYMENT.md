@@ -54,7 +54,7 @@ DATABASE_URL=sqlite:///./data/gremlinsai.db
 # Optional: External API Keys
 # OPENAI_API_KEY=your-key-here
 
-# Future Phase Configurations
+# External Service Configurations
 OLLAMA_BASE_URL=http://localhost:11434
 QDRANT_HOST=localhost
 QDRANT_PORT=6333
@@ -246,7 +246,7 @@ REDIS_URL=redis://localhost:6379
 - Data stored in `./data/gremlinsai.db`
 - Automatic backups recommended
 
-### PostgreSQL (Future)
+### PostgreSQL (Alternative)
 ```bash
 # Environment variable for PostgreSQL
 DATABASE_URL=postgresql://user:password@localhost/gremlinsai
@@ -272,7 +272,7 @@ logging.basicConfig(
 - Endpoint: `GET /`
 - Expected response: `{"message": "Welcome to the gremlinsAI API!"}`
 
-### Metrics (Future)
+### Metrics
 - Response times
 - Request counts
 - Error rates
@@ -382,4 +382,4 @@ tail -f app.log | grep -i "POST\|GET"
 - Monitor query performance
 - Consider connection pooling for high load
 
-This deployment guide will be updated as new phases are implemented and additional deployment options become available.
+This deployment guide covers all current deployment options and configurations for the GremlinsAI backend system.

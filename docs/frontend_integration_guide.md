@@ -1,4 +1,8 @@
-# GremlinsAI Frontend Integration Guide (v9.0.0)
+# GremlinsAI Frontend Integration Guide
+
+> **🚨 Having Issues?** Check the [Frontend Troubleshooting Guide](frontend_troubleshooting_guide.md) for common problems and solutions.
+
+> **📚 Need More Details?** See the [Comprehensive Frontend Integration Guide](frontend_integration_comprehensive.md) for advanced features and complete examples. (v9.0.0)
 
 ## Table of Contents
 1. [Getting Started](#getting-started)
@@ -114,26 +118,129 @@ export const environment = {
 
 ## Authentication
 
-### API Key Authentication
-GremlinsAI uses API key authentication for secure access. Here's how to set up the API client using the native fetch API:
+### OAuth2 Authentication (v9.0.0) - PRODUCTION READY
+GremlinsAI now uses **Google OAuth2** for secure authentication:
+
+- **Authentication**: **REQUIRED** for all API endpoints
+- **OAuth2 Provider**: Google OAuth2 with JWT tokens
+- **Token Format**: `Authorization: Bearer <jwt_token>`
+- **Token Expiration**: 24 hours (configurable)
+- **User Management**: Automatic user creation and management
+
+### OAuth2 Configuration
+First, get your OAuth2 configuration from the API:
+
+```javascript
+async function getOAuth2Config() {
+  const response = await fetch(`${API_BASE_URL}/auth/config`);
+  const config = await response.json();
+  return config;
+  // Returns: { google_client_id, redirect_uri, scopes }
+}
+```
+
+### Google OAuth2 Login Flow
+Here's the complete OAuth2 authentication flow:
+
+#### 1. Frontend OAuth2 Implementation
+
+```javascript
+class OAuth2Manager {
+  constructor(config) {
+    this.clientId = config.google_client_id;
+    this.redirectUri = config.redirect_uri;
+    this.scopes = config.scopes.join(' ');
+    this.accessToken = localStorage.getItem('gremlins_access_token');
+  }
+
+  // Generate OAuth2 login URL
+  getLoginUrl() {
+    const params = new URLSearchParams({
+      client_id: this.clientId,
+      redirect_uri: this.redirectUri,
+      response_type: 'code',
+      scope: this.scopes,
+      access_type: 'offline',
+      prompt: 'consent'
+    });
+
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  }
+
+  // Handle OAuth2 callback
+  async handleCallback(code) {
+    try {
+      // Exchange authorization code for Google token
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: this.clientId,
+          client_secret: 'YOUR_CLIENT_SECRET', // Should be handled server-side
+          code: code,
+          grant_type: 'authorization_code',
+          redirect_uri: this.redirectUri
+        })
+      });
+
+      const tokenData = await tokenResponse.json();
+
+      // Exchange Google token for GremlinsAI token
+      const gremlinsResponse = await fetch(`${API_BASE_URL}/auth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          google_token: tokenData.id_token
+        })
+      });
+
+      const gremlinsData = await gremlinsResponse.json();
+
+      // Store the GremlinsAI access token
+      this.accessToken = gremlinsData.access_token;
+      localStorage.setItem('gremlins_access_token', this.accessToken);
+
+      return gremlinsData.user;
+    } catch (error) {
+      console.error('OAuth2 callback failed:', error);
+      throw error;
+    }
+  }
+
+  // Check if user is authenticated
+  isAuthenticated() {
+    return !!this.accessToken;
+  }
+
+  // Logout
+  logout() {
+    this.accessToken = null;
+    localStorage.removeItem('gremlins_access_token');
+  }
+}
+```
+
+#### 2. Authenticated API Client
 
 ```typescript
 class GremlinsAPIClient {
   private baseURL: string;
-  private apiKey: string;
+  private accessToken: string | null;
   private requestTimeout: number;
 
-  constructor(baseURL: string, apiKey: string, options?: { timeout?: number }) {
+  constructor(baseURL: string, options?: { timeout?: number }) {
     if (!baseURL) {
       throw new Error('API base URL is required');
     }
-    if (!apiKey || apiKey.trim() === '') {
-      throw new Error('API key is required and cannot be empty');
-    }
 
     this.baseURL = baseURL;
-    this.apiKey = apiKey.trim();
+    this.accessToken = localStorage.getItem('gremlins_access_token');
     this.requestTimeout = options?.timeout || 30000;
+  }
+
+  setAccessToken(token: string) {
+    this.accessToken = token;
+    localStorage.setItem('gremlins_access_token', token);
   }
 
   private async makeRequest<T>(
@@ -463,7 +570,7 @@ async function listTasks(filters = {}) {
 }
 ```
 
-### Enhanced Real-time API (Phase 6 - v8.0.0)
+### Enhanced Real-time API
 
 #### Subscribe to Real-time Events
 ```javascript
@@ -597,7 +704,7 @@ await updateSubscription('sub-123', {
 await cancelSubscription('sub-123');
 ```
 
-### Multi-Modal Processing (Phase 7 - v8.0.0)
+### Multi-Modal Processing
 
 #### Process Audio with Advanced Features
 ```javascript
@@ -855,7 +962,7 @@ const conversationData = await executeGraphQLQuery(GET_CONVERSATION, {
 });
 ```
 
-### Developer Portal & Documentation (Phase 8 - v8.0.0)
+### Developer Portal & Documentation
 
 #### Interactive Documentation Access
 ```javascript
@@ -1026,7 +1133,7 @@ class GremlinsWebSocket {
       this.ws = new WebSocket(`${this.url}/ws?token=${this.apiKey}&version=8.0.0`);
 
       this.ws.onopen = () => {
-        console.log('WebSocket connected to GremlinsAI v8.0.0');
+        console.log('WebSocket connected to GremlinsAI v9.0.0');
         this.connectionStatus = 'connected';
         this.reconnectAttempts = 0;
         this.startHeartbeat();
@@ -2002,7 +2109,7 @@ const useVirtualScrolling = (items: any[], itemHeight: number, containerHeight: 
 };
 ```
 
-// Multi-Modal Types (Phase 7 - v8.0.0)
+// Multi-Modal Types
 interface AudioProcessingOptions {
   transcribe?: boolean;
   language?: string;
@@ -2175,7 +2282,7 @@ interface MultiModalFusionResult {
   };
 }
 
-// Developer Portal Types (Phase 8 - v8.0.0)
+// Developer Portal Types
 interface DeveloperMetrics {
   system_health: {
     overall_score: number;

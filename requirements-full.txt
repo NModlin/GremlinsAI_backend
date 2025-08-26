@@ -1,0 +1,30 @@
+# GremlinsAI Backend - Full Installation
+# All features including multimodal processing
+
+# Include standard requirements
+-r requirements-standard.txt
+
+# Multimodal processing - Heavy dependencies
+torch>=2.0.0,<3.0.0
+torchvision>=0.15.0,<1.0.0
+transformers>=4.35.0,<5.0.0
+accelerate>=0.24.0,<1.0.0
+
+# CLIP embeddings for multimodal search
+clip-by-openai>=1.0.0,<2.0.0
+
+# Audio processing
+openai-whisper>=20231117
+pydub>=0.25.1,<1.0.0
+pyttsx3>=2.90,<3.0.0
+librosa>=0.10.0,<1.0.0
+
+# Video processing
+ffmpeg-python>=0.2.0,<1.0.0
+opencv-python>=4.8.0,<5.0.0
+
+# Image processing
+Pillow>=10.0.0,<11.0.0
+
+# Computer vision and OCR (optional)
+# pytesseract>=0.3.10,<1.0.0

@@ -15,7 +15,7 @@ from app.api.v1.websocket.connection_manager import connection_manager
 from app.database.database import get_db
 from app.services.chat_history import ChatHistoryService
 from app.core.orchestrator import enhanced_orchestrator
-from app.core.security import verify_api_key, check_rate_limit, sanitize_input
+from app.core.security import verify_access_token, check_rate_limit, sanitize_input, OAuth2Error
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ async def websocket_endpoint(
     websocket: WebSocket,
     client_id: Optional[str] = Query(None),
     client_type: Optional[str] = Query("web"),
-    api_key: Optional[str] = Query(None)
+    token: Optional[str] = Query(None)
 ):
     """
     Main WebSocket endpoint for real-time communication.
@@ -35,17 +35,25 @@ async def websocket_endpoint(
     Query Parameters:
     - client_id: Optional client identifier
     - client_type: Type of client (web, mobile, etc.)
-    - api_key: Optional API key for authentication
+    - token: OAuth2 access token for authentication
     """
     # Generate connection ID
     connection_id = client_id or str(uuid.uuid4())
 
-    # Security check - verify API key if provided
+    # Security check - verify OAuth2 token if provided
     user_info = None
-    if api_key:
-        user_info = verify_api_key(api_key)
-        if not user_info:
-            await websocket.close(code=4001, reason="Invalid API key")
+    if token:
+        try:
+            token_data = verify_access_token(token)
+            user_info = {
+                "user_id": token_data.user_id,
+                "email": token_data.email,
+                "name": token_data.name,
+                "roles": token_data.roles,
+                "permissions": token_data.permissions
+            }
+        except OAuth2Error:
+            await websocket.close(code=4001, reason="Invalid or expired token")
             return
 
     # Rate limiting check

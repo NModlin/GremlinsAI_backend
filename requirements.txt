@@ -23,6 +23,11 @@ aiosqlite>=0.19.0,<1.0.0
 python-dotenv>=1.0.0,<2.0.0
 pydantic>=2.0.0,<3.0.0
 
+# OAuth2 Authentication
+PyJWT>=2.8.0,<3.0.0
+cryptography>=41.0.0,<42.0.0
+httpx>=0.25.0,<1.0.0
+
 # Phase 3: Multi-Agent Architecture
 crewai>=0.28.0,<1.0.0
 crewai-tools>=0.1.0,<1.0.0

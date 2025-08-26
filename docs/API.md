@@ -12,7 +12,7 @@ http://localhost:8000
 
 ## Authentication
 
-Currently, no authentication is required. Future versions will include API key authentication.
+Currently, no authentication is required.
 
 ## API Endpoints
 
@@ -35,7 +35,7 @@ Returns a welcome message to verify the API is running.
 ### Simple Agent Invocation
 
 #### POST /api/v1/agent/invoke
-Invoke the AI agent with a simple query (Phase 1 compatibility).
+Invoke the AI agent with a simple query.
 
 **Request Body:**
 ```json
@@ -305,7 +305,7 @@ Visit these URLs when the server is running:
 
 ## Rate Limiting
 
-Currently, no rate limiting is implemented. Future versions will include configurable rate limits.
+Currently, no rate limiting is implemented.
 
 ## Versioning
 

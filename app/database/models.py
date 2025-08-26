@@ -6,22 +6,59 @@ from app.database.database import Base
 import uuid
 
 
+class User(Base):
+    """Model for OAuth2 authenticated users."""
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)  # Google sub or other OAuth provider ID
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    picture = Column(String(500), nullable=True)  # Profile picture URL
+    email_verified = Column(Boolean, default=False)
+
+    # Authorization
+    roles = Column(JSON, default=lambda: ["user"])  # List of roles
+    permissions = Column(JSON, default=lambda: ["read", "write"])  # List of permissions
+
+    # OAuth2 provider info
+    provider = Column(String(50), default="google")  # OAuth provider
+    provider_id = Column(String(255), nullable=True)  # Provider-specific ID
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    last_login = Column(DateTime(timezone=True), nullable=True)
+
+    # Status
+    is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=False)
+
+    # Relationships
+    conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<User(id={self.id}, email={self.email}, name={self.name})>"
+
+
 class Conversation(Base):
     """Model for chat conversations."""
     __tablename__ = "conversations"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     title = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     is_active = Column(Boolean, default=True)
-    
+
     # Relationships
+    user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
     multimodal_content = relationship("MultiModalContent", back_populates="conversation", cascade="all, delete-orphan")
 
     def __repr__(self):
-        return f"<Conversation(id={self.id}, title={self.title})>"
+        return f"<Conversation(id={self.id}, title={self.title}, user_id={self.user_id})>"
 
 
 class Message(Base):
@@ -52,6 +89,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     title = Column(String(500), nullable=False)
     content = Column(Text, nullable=False)
     content_type = Column(String(100), default="text/plain")  # MIME type
@@ -74,10 +112,11 @@ class Document(Base):
     is_active = Column(Boolean, default=True)
 
     # Relationships
+    user = relationship("User", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
 
     def __repr__(self):
-        return f"<Document(id={self.id}, title={self.title[:50]})>"
+        return f"<Document(id={self.id}, title={self.title[:50]}, user_id={self.user_id})>"
 
 
 class DocumentChunk(Base):

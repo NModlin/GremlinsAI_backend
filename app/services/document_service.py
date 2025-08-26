@@ -23,6 +23,7 @@ class DocumentService:
         db: AsyncSession,
         title: str,
         content: str,
+        user_id: str,
         content_type: str = "text/plain",
         file_path: Optional[str] = None,
         file_size: Optional[int] = None,
@@ -35,6 +36,7 @@ class DocumentService:
         try:
             # Create document record
             document = Document(
+                user_id=user_id,
                 title=title,
                 content=content,
                 content_type=content_type,

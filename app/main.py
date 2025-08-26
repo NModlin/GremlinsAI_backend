@@ -5,8 +5,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy.exc import SQLAlchemyError
+from dotenv import load_dotenv
 
-from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal, health, websocket as websocket_realtime
+# Load environment variables from .env file
+load_dotenv()
+
+from app.api.v1.endpoints import agent, chat_history, orchestrator, multi_agent, documents, realtime, docs, developer_portal, multimodal, health, websocket as websocket_realtime, auth, simple_chat, simple_docs, document_upload
 from app.api.v1.websocket import endpoints as websocket_endpoints
 from app.database.database import ensure_data_directory
 from app.core.exceptions import GremlinsAIException
@@ -101,16 +105,20 @@ app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
 
 # Include the API routers from different modules
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(agent.router, prefix="/api/v1/agent", tags=["Agent"])
+app.include_router(simple_chat.router, prefix="/api/v1/agent", tags=["Simple Chat"])
+app.include_router(simple_docs.router, prefix="/api/v1", tags=["Simple Documentation"])
 app.include_router(multi_agent.router, prefix="/api/v1/multi-agent", tags=["Multi-Agent"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents & RAG"])
+app.include_router(document_upload.router, prefix="/api/v1/upload", tags=["Document Upload & RAG"])
 app.include_router(chat_history.router, prefix="/api/v1/history", tags=["Chat History"])
 app.include_router(orchestrator.router, prefix="/api/v1/orchestrator", tags=["Orchestrator"])
 app.include_router(websocket_endpoints.router, prefix="/api/v1/ws", tags=["WebSocket"])
 app.include_router(websocket_realtime.router, prefix="/api/v1/realtime-ws", tags=["Real-time WebSocket"])
 app.include_router(realtime.router, prefix="/api/v1/realtime", tags=["Real-time API"])
 app.include_router(docs.router, prefix="/docs", tags=["Documentation"])
-app.include_router(developer_portal.router, prefix="/developer-portal", tags=["Developer Portal"])
+app.include_router(developer_portal.router, prefix="/api/v1/developer-portal", tags=["Developer Portal"])
 app.include_router(multimodal.router, prefix="/api/v1/multimodal", tags=["Multi-Modal"])
 app.include_router(health.router, prefix="/api/v1/health", tags=["Health & Monitoring"])
 

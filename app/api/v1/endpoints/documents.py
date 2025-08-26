@@ -12,6 +12,7 @@ from app.database.database import get_db
 from app.services.document_service import DocumentService
 from app.core.rag_system import rag_system
 from app.core.vector_store import vector_store
+from app.core.security import get_current_user, User, check_user_access
 from app.api.v1.schemas.documents import (
     DocumentCreate,
     DocumentResponse,
@@ -54,6 +55,7 @@ from app.core.security import sanitize_filename
 async def upload_document(
     file: UploadFile = File(...),
     metadata: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Upload a document file with optional metadata."""
@@ -134,6 +136,7 @@ async def upload_document(
         # Create document from file using static method
         document = await DocumentService.create_document(
             db=db,
+            user_id=current_user.id,
             title=sanitized_filename,
             content=text_content,
             content_type=content_type,
@@ -144,7 +147,8 @@ async def upload_document(
                 "upload_method": "file_upload",
                 "file_type": content_type,
                 "processed_at": time.time(),
-                "file_size_bytes": len(content)
+                "file_size_bytes": len(content),
+                "uploaded_by": current_user.email
             }
         )
 
@@ -177,6 +181,7 @@ async def upload_document(
 async def upload_documents_batch(
     files: List[UploadFile] = File(...),
     metadata: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Upload multiple document files with optional shared metadata."""
@@ -242,6 +247,7 @@ async def upload_documents_batch(
                 # Create document
                 document = await DocumentService.create_document(
                     db=db,
+                    user_id=current_user.id,
                     title=sanitized_filename,
                     content=text_content,
                     content_type=content_type,
@@ -252,7 +258,8 @@ async def upload_documents_batch(
                         "upload_method": "batch_upload",
                         "file_type": content_type,
                         "batch_index": i,
-                        "processed_at": time.time()
+                        "processed_at": time.time(),
+                        "uploaded_by": current_user.email
                     }
                 )
 
@@ -302,6 +309,7 @@ async def upload_document_realtime(
     file: UploadFile = File(...),
     metadata: Optional[str] = Form(None),
     session_id: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Upload a document with real-time progress tracking via WebSocket."""
@@ -366,6 +374,7 @@ async def upload_document_realtime(
         # Create document
         document = await DocumentService.create_document(
             db=db,
+            user_id=current_user.id,
             title=sanitized_filename,
             content=text_content,
             content_type=content_type,
@@ -377,7 +386,8 @@ async def upload_document_realtime(
                 "file_type": content_type,
                 "upload_id": upload_id,
                 "session_id": session_id,
-                "processed_at": time.time()
+                "processed_at": time.time(),
+                "uploaded_by": current_user.email
             }
         )
 

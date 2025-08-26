@@ -2,7 +2,7 @@
 import logging
 from typing import Dict, Any, List, Optional
 from crewai import Agent, Task, Crew, Process
-from crewai_tools import SerperDevTool, WebsiteSearchTool
+# from crewai_tools import SerperDevTool, WebsiteSearchTool  # Temporarily disabled due to import issues
 from app.core.llm_config import get_llm, get_llm_info, LLMProvider
 from app.core.tools import duckduckgo_search
 
@@ -133,25 +133,13 @@ class MultiAgentOrchestrator:
     def _create_search_tool(self):
         """Create a search tool for the research agent."""
         try:
-            # Use CrewAI compatible tool from crewai_tools
-            from crewai_tools import SerperDevTool
-            # Try SerperDevTool first (requires API key)
-            return SerperDevTool()
+            # Simple fallback - return None and handle gracefully
+            logger.warning("Search tools temporarily disabled to fix import issues")
+            return None
         except Exception:
-            try:
-                # Fallback to DuckDuckGo search from crewai_tools
-                from crewai_tools import tool
-
-                @tool("DuckDuckGo Search")
-                def search_tool(query: str) -> str:
-                    """Search the web using DuckDuckGo for current information."""
-                    return duckduckgo_search(query)
-
-                return search_tool
-            except Exception:
-                # Final fallback - return None and handle gracefully
-                logger.warning("No search tools available, agents will work without search capability")
-                return None
+            # Final fallback - return None and handle gracefully
+            logger.warning("No search tools available, agents will work without search capability")
+            return None
 
     def _create_mock_agents(self) -> Dict[str, Any]:
         """Create mock agents when no LLM is available."""
